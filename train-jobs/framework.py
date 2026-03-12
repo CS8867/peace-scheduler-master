@@ -22,11 +22,12 @@ class CheckpointManager:
             self.start_epoch = ckpt['epoch'] 
             print(f"📦 [FRAMEWORK] Resuming from start of Epoch {self.start_epoch}")
 
-        # Signal Registration
+        # Signal Registration. The concept of "registering" a signal is basically just telling the OS that "Hey, when you see this signal, call this function". You kind of ask the OS to maintain a table that maps the signal to the desired function. Whenever the signal is sent to the process, the OS stops all execution, treats this like an interrupt, and jumps to the registered function.
         signal.signal(signal.SIGUSR1, self._handle_signal)
         signal.signal(signal.SIGTERM, self._handle_signal)
 
     def _handle_signal(self, signum, frame):
+        
         print(f"\n⚠️ [FRAMEWORK] Signal {signum} received! Flagging for stop...")
         self.stop_requested = True
 
