@@ -22,7 +22,7 @@ def main():
     optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
 
     # 3. Training Loop (Fixed Duration)
-    EPOCHS = 10
+    EPOCHS = 50
     print(f"   [JOB 1] Training for {EPOCHS} epochs on {device}...")
 
     for epoch in range(EPOCHS):
