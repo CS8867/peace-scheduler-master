@@ -70,7 +70,9 @@ class HeavyCNN(nn.Module):
 
 
 def main():
-    print("🚀 [JOB 1] Starting High Priority Training (Heavy Model)...")
+    import sys
+    print("🚀 [JOB 1] Starting High Priority Training (Heavy Model)...", flush=True)
+    job_start = time.time()
 
     # 1. Setup Data with heavier augmentation
     transform = transforms.Compose([
@@ -92,13 +94,19 @@ def main():
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=2)
 
     param_count = sum(p.numel() for p in net.parameters())
-    print(f"   [JOB 1] Model has {param_count:,} parameters")
+    print(f"   [JOB 1] Model has {param_count:,} parameters", flush=True)
+    print(f"   [JOB 1] CUDA available: {torch.cuda.is_available()}", flush=True)
+    if torch.cuda.is_available():
+        print(f"   [JOB 1] GPU: {torch.cuda.get_device_name(0)}", flush=True)
+        print(f"   [JOB 1] GPU Memory: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f} GB", flush=True)
 
     # 3. Training Loop
     EPOCHS = 2
-    print(f"   [JOB 1] Training for {EPOCHS} epochs on {device} (batch_size=16)...")
+    print(f"   [JOB 1] Training for {EPOCHS} epochs on {device} (batch_size=16)...", flush=True)
+    print(f"   [JOB 1] Total batches per epoch: {len(trainloader)}", flush=True)
 
     for epoch in range(EPOCHS):
+        epoch_start = time.time()
         running_loss = 0.0
         correct = 0
         total = 0
@@ -117,15 +125,18 @@ def main():
             correct += predicted.eq(labels).sum().item()
 
             if i % 200 == 199:
+                elapsed = time.time() - epoch_start
                 acc = 100.0 * correct / total
-                print(f"   [JOB 1] Epoch {epoch + 1}, Batch {i + 1}: Loss {running_loss / 200:.3f}, Acc {acc:.1f}%")
+                print(f"   [JOB 1] Epoch {epoch + 1}, Batch {i + 1}/{len(trainloader)}: Loss {running_loss / 200:.3f}, Acc {acc:.1f}%, Time {elapsed:.1f}s", flush=True)
                 running_loss = 0.0
 
         scheduler.step()
+        epoch_time = time.time() - epoch_start
         epoch_acc = 100.0 * correct / total
-        print(f"   [JOB 1] Epoch {epoch + 1} complete — Acc: {epoch_acc:.1f}%")
+        print(f"   [JOB 1] Epoch {epoch + 1} complete — Acc: {epoch_acc:.1f}%, Epoch Time: {epoch_time:.1f}s", flush=True)
 
-    print("✅ [JOB 1] Finished Training. Exiting.")
+    total_time = time.time() - job_start
+    print(f"✅ [JOB 1] Finished Training. Total time: {total_time:.1f}s. Exiting.", flush=True)
 
 if __name__ == "__main__":
     main()
