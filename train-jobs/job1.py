@@ -98,7 +98,7 @@ def main():
     print(f"   [JOB 1] CUDA available: {torch.cuda.is_available()}", flush=True)
     if torch.cuda.is_available():
         print(f"   [JOB 1] GPU: {torch.cuda.get_device_name(0)}", flush=True)
-        print(f"   [JOB 1] GPU Memory: {torch.cuda.get_device_properties(0).total_mem / 1e9:.1f} GB", flush=True)
+        print(f"   [JOB 1] GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB", flush=True)
 
     # 3. Training Loop
     EPOCHS = 2
