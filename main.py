@@ -119,6 +119,7 @@ def main():
         logger.info("Waiting for Job 1 to finish...")
         Monitor.wait_for_any_exit([job1_id])
         logger.info("Job 1 finished.")
+        debug_logs(job1_id, "job1")
 
         # 3. Checkpoint & Kill Job 2 Old (The Workflow You Requested)
         logger.info(f"Signaling Job 2 Old ({job2_old_id}) to checkpoint and exit...")
