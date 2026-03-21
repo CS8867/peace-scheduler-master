@@ -17,7 +17,7 @@ CHECKPOINT_HOST_DIR = "/home/node4/mlProfiler/checkpoints"
 CHECKPOINT_MOUNT_DIR = "/app/checkpoints"
 IMAGE_NAME = "nba556677/ml_tasks:latest"
 # WORK_DIR = "/home/node4/peace-scheduler-master/jobs"
-HOST_JOBS_DIR = "/home/node4/peace-scheduler-master/train-jobs"
+HOST_JOBS_DIR = "/home/node4/peace-repo/peace-scheduler-master/train-jobs"
 CONTAINER_JOBS_DIR = "/app/jobs"
 # FRAMEWORK_DIR = "/home/node4/peace-scheduler-master"
 
