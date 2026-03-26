@@ -5,6 +5,7 @@ import os
 from state import get_state, ContainerStatus
 from docker_layer import DockerLayer
 from monitor import Monitor
+from router import Router
 import argparse
 
 # Import your workflows
@@ -41,7 +42,7 @@ SERVE_INFERENCE_CMD = (
     "python recommend-inference.py"
     " --batch_size 2"
     " --model_name bert-base-cased"
-    " --profile_nstep 100"
+    " --profile_nstep 10000"
     " --log_dir test"
 )
 SERVE_WORKDIR = "/root/mlprofiler/workloads/inference"
@@ -111,6 +112,9 @@ def main():
         # run_training(config_path=args.config)
         logger.info(">>> Launching Initial Training Jobs (Job1 + Job2 Old)...")
 
+        # --- WORKFLOW TIMER: start when job2_old launches ---
+        workflow_start_time = time.time()
+
         # 1. Start Initial Jobs
         job1_id = DockerLayer.start_container(IMAGE_NAME, "job1", cmd_job1, 0, 50, volumes)
         job2_old_id = DockerLayer.start_container(IMAGE_NAME, "job2_old", cmd_job2_old, 0, 50, volumes)
@@ -139,6 +143,12 @@ def main():
         
         # Optional: Monitor them to completion
         Monitor.wait_for_any_exit([job2_new_id])
+
+        # --- WORKFLOW TIMER: end when job2_new finishes ---
+        workflow_end_time = time.time()
+        workflow_duration = workflow_end_time - workflow_start_time
+        logger.info(f"[TIMER] training_workflow_time (job2_old start -> job2_new end): {workflow_duration:.4f} seconds")
+
         Monitor.wait_for_any_exit([job3_id])
         
         # Dump logs to show resume proof
@@ -152,161 +162,139 @@ def main():
 
     elif args.mode == 'serve':
         # ----------------------------------------------------------------
-        # Serve workflow with the REAL inference workload replacing job2.
-        #   Phase 1: job1 (toy, 50%) + w2_old (inference, 50%)
-        #   Phase 2: w2_new (inference, 40%) + job3 (toy, 60%)
-        # We measure the container-swap time between phases.
+        # Serve workflow with container-level router/load balancer.
+        #   Phase 1: job1 (toy, 50%) + job2_old (inference, 50%)
+        #   Phase 2: job2_new (inference, 40%) + job3 (toy, 60%)
+        # The router detects job2_new readiness via Docker container logs
+        # and measures the actual switch/downtime.
         # ----------------------------------------------------------------
 
         # Build the command that runs the inference inside the container
         serve_container_cmd = f"bash -c 'cd {SERVE_WORKDIR} && {SERVE_INFERENCE_CMD}'"
-        # Ensure Python stdout is unbuffered so logs appear in docker logs immediately
         serve_envs = {"PYTHONUNBUFFERED": "1"}
 
-        # 1. START INITIAL STATE: Job1 (toy) + W2_old (inference) at 50/50 MPS
-        logger.info(">>> Launching Initial Jobs (Job1 + W2 Old)...")
+        # Create the router
+        router = Router()
+
+        # 1. START INITIAL STATE: Job1 (toy) + Job2_old (inference) at 50/50 MPS
+        logger.info(">>> Launching Initial Jobs (Job1 + Job2 Old)...")
         job1_id = DockerLayer.start_container(IMAGE_NAME, "job1", cmd_job1, 0, 50, volumes)
-        w2_old_id = DockerLayer.start_container(
-            IMAGE_NAME, "w2_old", serve_container_cmd, 0, 50, SERVE_VOLUMES, envs=serve_envs
+        job2_old_id = DockerLayer.start_container(
+            IMAGE_NAME, "job2_old", serve_container_cmd, 0, 50, SERVE_VOLUMES, envs=serve_envs
         )
 
-        # 2. Wait for Job1 to complete
+        # 2. Point router to job2_old (it's the active backend)
+        router.set_backend(job2_old_id)
+        logger.info("Router -> Job2 Old")
+
+        # 3. Wait for Job1 to complete
         logger.info("Waiting for Job 1 to finish...")
         Monitor.wait_for_any_exit([job1_id])
         logger.info("Job 1 finished.")
 
-        # 3. Spawn W2_new and Job3 immediately with revised MPS partitions
-        logger.info(">>> Launching Phase 2 (W2 New + Job 3)...")
-        w2_new_id = DockerLayer.start_container(
-            IMAGE_NAME, "w2_new", serve_container_cmd, 0, 40, SERVE_VOLUMES, envs=serve_envs
+        # 4. Spawn Job2_new and Job3 with revised MPS partitions
+        logger.info(">>> Launching Phase 2 (Job2 New + Job 3)...")
+        job2_new_id = DockerLayer.start_container(
+            IMAGE_NAME, "job2_new", serve_container_cmd, 0, 40, SERVE_VOLUMES, envs=serve_envs
         )
         job3_id = DockerLayer.start_container(IMAGE_NAME, "job3", cmd_job3, 0, 60, volumes)
 
-        # 4. Monitor until both new containers are fully running (or have already exited)
-        start_time = time.time()
-        w2_new_confirmed = False
-        job3_confirmed = False
-        while True:
-            w2_new_running = DockerLayer.is_container_running(w2_new_id)
-            job3_running = DockerLayer.is_container_running(job3_id)
+        # 5. Switch router from job2_old to job2_new (measures downtime)
+        #    The router polls job2_new's container logs for inference output.
+        switch_duration = router.switch_backend(job2_new_id)
 
-            # Once a container is seen running at least once, mark it confirmed
-            if w2_new_running:
-                w2_new_confirmed = True
-            if job3_running:
-                job3_confirmed = True
+        if switch_duration is not None:
+            logger.info(f">>> ROUTER SWITCH DOWNTIME: {switch_duration:.4f} seconds")
+        else:
+            logger.error("Router switch failed (timeout)!")
 
-            if w2_new_confirmed and job3_confirmed:
-                logger.info("Both W2 (New) and Job 3 are running.")
-                break
+        # 6. Kill job2_old now that router points to job2_new
+        logger.info(f"Stopping Job2 Old ({job2_old_id})...")
+        debug_logs(job2_old_id, "job2_old")
+        DockerLayer.stop_and_remove(job2_old_id)
+        logger.info("Job2 Old stopped and removed.")
 
-            # If a container was never seen running and is already gone, it crashed/exited early
-            if not w2_new_running and not w2_new_confirmed:
-                # Check if container still exists but is not running (i.e. exited)
-                try:
-                    import docker as _docker
-                    c = _docker.from_env().containers.get(w2_new_id)
-                    if c.status in ('exited', 'dead'):
-                        logger.error(f"W2 New ({w2_new_id}) exited early! Status: {c.status}")
-                        debug_logs(w2_new_id, "w2_new")
-                        break
-                except:
-                    logger.error(f"W2 New ({w2_new_id}) container not found!")
-                    break
-
-            if not job3_running and not job3_confirmed:
-                try:
-                    import docker as _docker
-                    c = _docker.from_env().containers.get(job3_id)
-                    if c.status in ('exited', 'dead'):
-                        logger.error(f"Job 3 ({job3_id}) exited early! Status: {c.status}")
-                        debug_logs(job3_id, "job3")
-                        break
-                except:
-                    logger.error(f"Job 3 ({job3_id}) container not found!")
-                    break
-
-            time.sleep(0.1)
-
-        total_time = time.time() - start_time
-        logger.info(f"Phase 2 containers took {total_time:.2f} seconds to start.")
-
-        # 5. Kill W2_old now that replacements are confirmed running
-        logger.info(f"Stopping W2 Old ({w2_old_id})...")
-        debug_logs(w2_old_id, "w2_old")
-        DockerLayer.stop_and_remove(w2_old_id)
-        logger.info("W2 Old stopped and removed.")
-
-        # 6. Wait for new containers to produce output, then dump logs
-        logger.info("Waiting 10s for new containers to initialize before dumping logs...")
-        time.sleep(10)
-        debug_logs(w2_new_id, "w2_new")
+        # 7. Dump logs from new containers
+        debug_logs(job2_new_id, "job2_new")
         debug_logs(job3_id, "job3")
 
-        # 7. Verify W2_old is gone
-        if not DockerLayer.is_container_running(w2_old_id):
-            logger.info("Serve Workflow Complete. W2_old successfully replaced.")
+        # 8. Verify job2_old is gone
+        if not DockerLayer.is_container_running(job2_old_id):
+            logger.info("Serve Workflow Complete. Job2_old successfully replaced.")
         else:
-            logger.error("W2_old is still running! Something went wrong.")
+            logger.error("Job2_old is still running! Something went wrong.")
 
     elif args.mode == 'serve-gpu-check':
         # ----------------------------------------------------------------
-        # Serve workflow with GPU activity probing.
+        # Serve workflow with GPU activity probing + router switch timing.
         #   Same as 'serve', but instead of checking container.status == running,
         #   we wait until the workload is actually using the GPU (nvidia-smi)
-        #   before killing w2_old.
-        #   Phase 1: job1 (toy, 50%) + w2_old (inference, 50%)
-        #   Phase 2: w2_new (inference, 40%) + job3 (toy, 60%)
+        #   before switching the router and killing job2_old.
+        #   Phase 1: job1 (toy, 50%) + job2_old (inference, 50%)
+        #   Phase 2: job2_new (inference, 40%) + job3 (toy, 60%)
         # ----------------------------------------------------------------
 
         # Setup the command
         serve_container_cmd = f"bash -c 'cd {SERVE_WORKDIR} && {SERVE_INFERENCE_CMD}'"
         serve_envs = {"PYTHONUNBUFFERED": "1"}
 
-        # 1. START INITIAL STATE: Job1 (toy) + W2_old (inference) at 50/50 MPS
-        logger.info(">>> [GPU-Check] Launching Initial Jobs (Job1 + W2 Old)...")
+        # Create the router
+        router = Router()
+
+        # 1. START INITIAL STATE: Job1 (toy) + Job2_old (inference) at 50/50 MPS
+        logger.info(">>> [GPU-Check] Launching Initial Jobs (Job1 + Job2 Old)...")
         job1_id = DockerLayer.start_container(IMAGE_NAME, "job1", cmd_job1, 0, 50, volumes)
-        w2_old_id = DockerLayer.start_container(
-            IMAGE_NAME, "w2_old", serve_container_cmd, 0, 50, SERVE_VOLUMES, envs=serve_envs
+        job2_old_id = DockerLayer.start_container(
+            IMAGE_NAME, "job2_old", serve_container_cmd, 0, 50, SERVE_VOLUMES, envs=serve_envs
         )
+
+        # Point router to job2_old
+        router.set_backend(job2_old_id)
+        logger.info("Router -> Job2 Old")
 
         # 2. Wait for Job1 to complete
         logger.info("Waiting for Job 1 to finish...")
         Monitor.wait_for_any_exit([job1_id])
         logger.info("Job 1 finished.")
 
-        # 3. Spawn W2_new and Job3 with revised MPS partitions
-        logger.info(">>> [GPU-Check] Launching Phase 2 (W2 New + Job 3)...")
-        w2_new_id = DockerLayer.start_container(
-            IMAGE_NAME, "w2_new", serve_container_cmd, 0, 40, SERVE_VOLUMES, envs=serve_envs
+        # 3. Spawn Job2_new and Job3 with revised MPS partitions
+        logger.info(">>> [GPU-Check] Launching Phase 2 (Job2 New + Job 3)...")
+        job2_new_id = DockerLayer.start_container(
+            IMAGE_NAME, "job2_new", serve_container_cmd, 0, 40, SERVE_VOLUMES, envs=serve_envs
         )
         job3_id = DockerLayer.start_container(IMAGE_NAME, "job3", cmd_job3, 0, 60, volumes)
 
-        # 4. Wait for W2_new to actually use the GPU before killing W2_old
+        # 4. Wait for Job2_new to actually use the GPU before switching
         start_time = time.time()
-        result = Monitor.wait_for_gpu_run(w2_new_id)
+        result = Monitor.wait_for_gpu_run(job2_new_id)
         total_time = time.time() - start_time
 
         if result is None:
-            logger.error("W2 New never started using the GPU. Aborting swap.")
-            debug_logs(w2_new_id, "w2_new")
+            logger.error("Job2 New never started using the GPU. Aborting swap.")
+            debug_logs(job2_new_id, "job2_new")
         else:
-            logger.info(f"W2 New confirmed on GPU after {total_time:.2f}s. Killing W2 Old...")
+            logger.info(f"Job2 New confirmed on GPU after {total_time:.2f}s.")
 
-            # 5. Kill W2_old now that W2_new is confirmed on GPU
-            debug_logs(w2_old_id, "w2_old")
-            DockerLayer.stop_and_remove(w2_old_id)
-            logger.info("W2 Old stopped and removed.")
+            # 5. GPU confirmed — switch router to job2_new and measure the switch time
+            switch_start = time.time()
+            router.set_backend(job2_new_id)
+            switch_duration = time.time() - switch_start
+            logger.info(f">>> ROUTER SWITCH DOWNTIME: {switch_duration:.6f} seconds")
 
-        # 6. Dump logs from new containers
-        debug_logs(w2_new_id, "w2_new")
+            # 6. Kill Job2_old now that router points to Job2_new
+            debug_logs(job2_old_id, "job2_old")
+            DockerLayer.stop_and_remove(job2_old_id)
+            logger.info("Job2 Old stopped and removed.")
+
+        # 7. Dump logs from new containers
+        debug_logs(job2_new_id, "job2_new")
         debug_logs(job3_id, "job3")
 
-        # 7. Verify W2_old is gone
-        if not DockerLayer.is_container_running(w2_old_id):
-            logger.info("Serve-GPU-Check Workflow Complete. W2_old successfully replaced.")
+        # 8. Verify Job2_old is gone
+        if not DockerLayer.is_container_running(job2_old_id):
+            logger.info("Serve-GPU-Check Workflow Complete. Job2_old successfully replaced.")
         else:
-            logger.error("W2_old is still running! Something went wrong.")
+            logger.error("Job2_old is still running! Something went wrong.")
 
     elif args.mode == 'inference':
         # ----------------------------------------------------------------

@@ -228,3 +228,19 @@ class DockerLayer:
         except Exception as e:
             logging.error(f"Error getting host PIDs for {container_id}: {str(e)}")
             return []
+
+    @staticmethod
+    def has_inference_output(container_id: str) -> bool:
+        """
+        Returns True if the container has produced at least one inference
+        prediction line in its logs (e.g. 'predictions:').
+        This is used as a container-level readiness signal by the Router
+        so the inference script itself does not need modification.
+        """
+        try:
+            container = client.containers.get(container_id)
+            logs = container.logs(tail=50).decode("utf-8", errors="replace")
+            return "predictions:" in logs
+        except Exception as e:
+            logging.error(f"Error checking inference output for {container_id}: {str(e)}")
+            return False

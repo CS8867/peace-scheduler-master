@@ -5,12 +5,22 @@ import torchvision
 import torchvision.transforms as transforms
 import argparse
 import logging
+import time
+import atexit
 from model import SimpleCNN
 from framework import CheckpointManager  # <--- The only "Framework" touchpoint
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - JOB2 - %(message)s', force=True)
 
 def main():
+    job2_standalone_start = time.time()
+
+    def log_standalone_time():
+        elapsed = time.time() - job2_standalone_start
+        logging.info(f"[TIMER] job2_standalone_time: {elapsed:.4f} seconds")
+
+    atexit.register(log_standalone_time)
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--save_path', type=str, default='./checkpoints/job2.pt')
     parser.add_argument('--resume_from', type=str, default=None)
