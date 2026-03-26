@@ -102,7 +102,7 @@ def main():
     # 1. DEFINE COMMANDS
     cmd_job1 = f"python {CONTAINER_JOBS_DIR}/job1.py"
     cmd_job2_old = f"python {CONTAINER_JOBS_DIR}/job2.py --save_path {CHECKPOINT_MOUNT_DIR}/job2_ckpt.pt"
-    cmd_job2_new = f"python {CONTAINER_JOBS_DIR}/job2.py --resume_from {CHECKPOINT_MOUNT_DIR}/job2_ckpt.pt --max_epochs 30"
+    cmd_job2_new = f"python {CONTAINER_JOBS_DIR}/job2.py --resume_from {CHECKPOINT_MOUNT_DIR}/job2_ckpt.pt --max_epochs 20"
     cmd_job3 = f"python {CONTAINER_JOBS_DIR}/job3.py"
 
     # --- Orchestration Logic ---
