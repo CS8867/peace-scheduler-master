@@ -115,7 +115,7 @@ def main():
         cmd_job2_old = f"python {TRAIN_CONTAINER_JOBS_DIR}/job2.py --save_path {CHECKPOINT_MOUNT_DIR}/job2_ckpt.pt"
         cmd_job2_new = f"python {TRAIN_CONTAINER_JOBS_DIR}/job2.py --resume_from {CHECKPOINT_MOUNT_DIR}/job2_ckpt.pt --max_epochs 20"
         cmd_job3 = f"python {TRAIN_CONTAINER_JOBS_DIR}/job3.py"
-        print("🚀 Starting Training Workflow...")
+        print("Starting Training Workflow...")
 
         # In a real scenario, you might pass the config path here
         # run_training(config_path=args.config)
@@ -128,11 +128,17 @@ def main():
         job1_id = DockerLayer.start_container(IMAGE_NAME, "job1", cmd_job1, 0, 50, volumes)
         job2_old_id = DockerLayer.start_container(IMAGE_NAME, "job2_old", cmd_job2_old, 0, 50, volumes)
 
+        time_after_start_initial_containers = time.time()
+        logger.info(f"[TIMER] Time printed after job1_id and job2_old_id have started: {time_after_start_initial_containers - workflow_start_time:.4f} seconds")
+
         # 2. Wait for Job 1 to Exit
         logger.info("Waiting for Job 1 to finish...")
         Monitor.wait_for_any_exit([job1_id])
         logger.info("Job 1 finished.")
-        debug_logs(job1_id, "job1")
+        # debug_logs(job1_id, "job1")
+
+        time_afterjob1_exits = time.time()
+        logger.info(f"[TIMER] Time printed after job1 finishes: {time_afterjob1_exits - time_after_start_initial_containers:.4f} seconds")
 
         # 3. Checkpoint & Kill Job 2 Old (The Workflow You Requested)
         logger.info(f"Signaling Job 2 Old ({job2_old_id}) to checkpoint and exit...")
@@ -140,29 +146,39 @@ def main():
         # Send signal (assuming job2 handles SIGUSR1 or SIGTERM to save)
         DockerLayer.send_signal(job2_old_id, "SIGUSR1") 
         
+        time_after_sending_signal = time.time()
+        logger.info(f"[TIMER] Time printed after sending signal to job2_old: {time_after_sending_signal - time_afterjob1_exits:.4f} seconds")
+
         # Wait for it to save and die
         Monitor.wait_for_any_exit([job2_old_id])
         logger.info("Job 2 Old has successfully checkpointed and exited.")
-        debug_logs(job2_old_id, "job2_old")
+        # debug_logs(job2_old_id, "job2_old")
+
+        time_after_job2_old_exits = time.time()
+        logger.info(f"[TIMER] Time printed after job2_old finishes: {time_after_job2_old_exits - time_after_sending_signal:.4f} seconds")
 
         # 4. Start Next Phase
         logger.info(">>> Launching Phase 2 (Job 2 New + Job 3)...")
         job2_new_id = DockerLayer.start_container(IMAGE_NAME, "job2_new", cmd_job2_new, 0, 40, volumes)
         job3_id = DockerLayer.start_container(IMAGE_NAME, "job3", cmd_job3, 0, 60, volumes)
+
+        time_after_starting_new_containers = time.time()
+        logger.info(f"[TIMER] Time printed after starting job2_new and job3: {time_after_starting_new_containers - time_after_job2_old_exits:.4f} seconds")
         
         # Optional: Monitor them to completion
         Monitor.wait_for_any_exit([job2_new_id])
 
         # --- WORKFLOW TIMER: end when job2_new finishes ---
         workflow_end_time = time.time()
+        logger.info("[TIMER] Time printed after job2_new finishes: {:.4f} seconds".format(workflow_end_time - time_after_starting_new_containers))
         workflow_duration = workflow_end_time - workflow_start_time
         logger.info(f"[TIMER] training_workflow_time (job2_old start -> job2_new end): {workflow_duration:.4f} seconds")
 
         Monitor.wait_for_any_exit([job3_id])
         
         # Dump logs to show resume proof
-        debug_logs(job2_new_id, "job2_new")
-        debug_logs(job3_id, "job3")
+        # debug_logs(job2_new_id, "job2_new")
+        # debug_logs(job3_id, "job3")
         
         # Cleanup
         DockerLayer.stop_and_remove(job2_new_id)
