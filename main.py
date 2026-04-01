@@ -237,7 +237,7 @@ def main():
         # ----------------------------------------------------------------
 
         # Build the commands for serve-gpu-check mode (all scripts from jobs/ folder)
-        serve_container_cmd = f"bash -c 'cd {SERVE_WORKDIR} && {SERVE_INFERENCE_CMD}'"
+        serve_job2_cmd = f"bash -c 'cd {SERVE_WORKDIR} && {SERVE_INFERENCE_CMD}'"
         serve_job1_cmd = f"bash -c 'cd {SERVE_WORKDIR} && python job1.py'"
         serve_job3_cmd = f"bash -c 'cd {SERVE_WORKDIR} && python job3.py'"
         serve_envs = {"PYTHONUNBUFFERED": "1"}
@@ -249,7 +249,7 @@ def main():
         logger.info(">>> [GPU-Check] Launching Initial Jobs (Job1 + Job2 Old)...")
         job1_id = DockerLayer.start_container(IMAGE_NAME, "job1", serve_job1_cmd, 0, 50, SERVE_VOLUMES, envs=serve_envs)
         job2_old_id = DockerLayer.start_container(
-            IMAGE_NAME, "job2_old", serve_container_cmd, 0, 50, SERVE_VOLUMES, envs=serve_envs
+            IMAGE_NAME, "job2_old", serve_job2_cmd, 0, 50, SERVE_VOLUMES, envs=serve_envs
         )
 
         # Point router to job2_old
@@ -264,7 +264,7 @@ def main():
         # 3. Spawn Job2_new and Job3 with revised MPS partitions
         logger.info(">>> [GPU-Check] Launching Phase 2 (Job2 New + Job 3)...")
         job2_new_id = DockerLayer.start_container(
-            IMAGE_NAME, "job2_new", serve_container_cmd, 0, 40, SERVE_VOLUMES, envs=serve_envs
+            IMAGE_NAME, "job2_new", serve_job2_cmd, 0, 40, SERVE_VOLUMES, envs=serve_envs
         )
         job3_id = DockerLayer.start_container(IMAGE_NAME, "job3", serve_job3_cmd, 0, 60, SERVE_VOLUMES, envs=serve_envs)
 
