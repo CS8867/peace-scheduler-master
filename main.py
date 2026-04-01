@@ -18,8 +18,10 @@ CHECKPOINT_HOST_DIR = "/home/node4/mlProfiler/checkpoints"
 CHECKPOINT_MOUNT_DIR = "/app/checkpoints"
 IMAGE_NAME = "nba556677/ml_tasks:latest"
 # WORK_DIR = "/home/node4/peace-scheduler-master/jobs"
-HOST_JOBS_DIR = "/home/node4/peace-repo/peace-scheduler-master/train-jobs"
-CONTAINER_JOBS_DIR = "/app/jobs"
+TRAIN_JOBS_DIR = "/home/node4/peace-repo/peace-scheduler-master/train-jobs"
+SERVE_JOBS_DIR = "/home/node4/peace-repo/peace-scheduler-master/jobs"
+TRAIN_CONTAINER_JOBS_DIR = "/app/train-jobs"
+SERVE_CONTAINER_JOBS_DIR = "/app/serve-jobs"
 # FRAMEWORK_DIR = "/home/node4/peace-scheduler-master"
 
 # --- SERVE WORKLOAD CONFIGURATION ---
@@ -45,7 +47,6 @@ SERVE_INFERENCE_CMD = (
     " --profile_nstep 10000"
     " --log_dir test"
 )
-SERVE_WORKDIR = "/root/mlprofiler/workloads/inference"
 
 # --- LOGGING SETUP (CRITICAL FIX) ---
 # We force logging to stream to Standard Out so you see it in the terminal
@@ -95,19 +96,22 @@ def main():
     volumes = {
         CHECKPOINT_HOST_DIR: {'bind': CHECKPOINT_MOUNT_DIR, 'mode': 'rw'},
         '/tmp/nvidia-mps': {'bind': '/tmp/nvidia-mps', 'mode': 'rw'},
-        HOST_JOBS_DIR: {'bind': CONTAINER_JOBS_DIR, 'mode': 'ro'},
+        TRAIN_JOBS_DIR: {'bind': TRAIN_CONTAINER_JOBS_DIR, 'mode': 'ro'},
+        SERVE_JOBS_DIR: {'bind': SERVE_CONTAINER_JOBS_DIR, 'mode': 'ro'}
         # '/home/node4/peace-scheduler-master/framework.py': {'bind': CONTAINER_JOBS_DIR, 'mode': 'ro'}  # If your framework code is in a separate directory
     }
     
-    # 1. DEFINE COMMANDS
-    cmd_job1 = f"python {CONTAINER_JOBS_DIR}/job1.py"
-    cmd_job2_old = f"python {CONTAINER_JOBS_DIR}/job2.py --save_path {CHECKPOINT_MOUNT_DIR}/job2_ckpt.pt"
-    cmd_job2_new = f"python {CONTAINER_JOBS_DIR}/job2.py --resume_from {CHECKPOINT_MOUNT_DIR}/job2_ckpt.pt --max_epochs 20"
-    cmd_job3 = f"python {CONTAINER_JOBS_DIR}/job3.py"
+
 
     # --- Orchestration Logic ---
     if args.mode == 'train':
+        # 1. DEFINE COMMANDS
+        cmd_job1 = f"python {TRAIN_CONTAINER_JOBS_DIR}/job1.py"
+        cmd_job2_old = f"python {TRAIN_CONTAINER_JOBS_DIR}/job2.py --save_path {CHECKPOINT_MOUNT_DIR}/job2_ckpt.pt"
+        cmd_job2_new = f"python {TRAIN_CONTAINER_JOBS_DIR}/job2.py --resume_from {CHECKPOINT_MOUNT_DIR}/job2_ckpt.pt --max_epochs 20"
+        cmd_job3 = f"python {TRAIN_CONTAINER_JOBS_DIR}/job3.py"
         print("🚀 Starting Training Workflow...")
+
         # In a real scenario, you might pass the config path here
         # run_training(config_path=args.config)
         logger.info(">>> Launching Initial Training Jobs (Job1 + Job2 Old)...")
@@ -170,9 +174,9 @@ def main():
         # ----------------------------------------------------------------
 
         # Build the commands for serve mode (all scripts from jobs/ folder)
-        serve_container_cmd = f"bash -c 'cd {SERVE_WORKDIR} && {SERVE_INFERENCE_CMD}'"
-        serve_job1_cmd = f"bash -c 'cd {SERVE_WORKDIR} && python job1.py'"
-        serve_job3_cmd = f"bash -c 'cd {SERVE_WORKDIR} && python job3.py'"
+        serve_container_cmd = f"python {SERVE_CONTAINER_JOBS_DIR}/{SERVE_INFERENCE_CMD}"
+        serve_job1_cmd = f"python {SERVE_CONTAINER_JOBS_DIR}/job1.py"
+        serve_job3_cmd = f"python {SERVE_CONTAINER_JOBS_DIR}/job3.py"
         serve_envs = {"PYTHONUNBUFFERED": "1"}
 
         # Create the router
