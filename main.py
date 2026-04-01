@@ -169,8 +169,10 @@ def main():
         # and measures the actual switch/downtime.
         # ----------------------------------------------------------------
 
-        # Build the command that runs the inference inside the container
+        # Build the commands for serve mode (all scripts from jobs/ folder)
         serve_container_cmd = f"bash -c 'cd {SERVE_WORKDIR} && {SERVE_INFERENCE_CMD}'"
+        serve_job1_cmd = f"bash -c 'cd {SERVE_WORKDIR} && python job1.py'"
+        serve_job3_cmd = f"bash -c 'cd {SERVE_WORKDIR} && python job3.py'"
         serve_envs = {"PYTHONUNBUFFERED": "1"}
 
         # Create the router
@@ -178,7 +180,7 @@ def main():
 
         # 1. START INITIAL STATE: Job1 (toy) + Job2_old (inference) at 50/50 MPS
         logger.info(">>> Launching Initial Jobs (Job1 + Job2 Old)...")
-        job1_id = DockerLayer.start_container(IMAGE_NAME, "job1", cmd_job1, 0, 50, volumes)
+        job1_id = DockerLayer.start_container(IMAGE_NAME, "job1", serve_job1_cmd, 0, 50, SERVE_VOLUMES, envs=serve_envs)
         job2_old_id = DockerLayer.start_container(
             IMAGE_NAME, "job2_old", serve_container_cmd, 0, 50, SERVE_VOLUMES, envs=serve_envs
         )
@@ -197,7 +199,7 @@ def main():
         job2_new_id = DockerLayer.start_container(
             IMAGE_NAME, "job2_new", serve_container_cmd, 0, 40, SERVE_VOLUMES, envs=serve_envs
         )
-        job3_id = DockerLayer.start_container(IMAGE_NAME, "job3", cmd_job3, 0, 60, volumes)
+        job3_id = DockerLayer.start_container(IMAGE_NAME, "job3", serve_job3_cmd, 0, 60, SERVE_VOLUMES, envs=serve_envs)
 
         # 5. Switch router from job2_old to job2_new (measures downtime)
         #    The router polls job2_new's container logs for inference output.
@@ -234,8 +236,10 @@ def main():
         #   Phase 2: job2_new (inference, 40%) + job3 (toy, 60%)
         # ----------------------------------------------------------------
 
-        # Setup the command
+        # Build the commands for serve-gpu-check mode (all scripts from jobs/ folder)
         serve_container_cmd = f"bash -c 'cd {SERVE_WORKDIR} && {SERVE_INFERENCE_CMD}'"
+        serve_job1_cmd = f"bash -c 'cd {SERVE_WORKDIR} && python job1.py'"
+        serve_job3_cmd = f"bash -c 'cd {SERVE_WORKDIR} && python job3.py'"
         serve_envs = {"PYTHONUNBUFFERED": "1"}
 
         # Create the router
@@ -243,7 +247,7 @@ def main():
 
         # 1. START INITIAL STATE: Job1 (toy) + Job2_old (inference) at 50/50 MPS
         logger.info(">>> [GPU-Check] Launching Initial Jobs (Job1 + Job2 Old)...")
-        job1_id = DockerLayer.start_container(IMAGE_NAME, "job1", cmd_job1, 0, 50, volumes)
+        job1_id = DockerLayer.start_container(IMAGE_NAME, "job1", serve_job1_cmd, 0, 50, SERVE_VOLUMES, envs=serve_envs)
         job2_old_id = DockerLayer.start_container(
             IMAGE_NAME, "job2_old", serve_container_cmd, 0, 50, SERVE_VOLUMES, envs=serve_envs
         )
@@ -262,7 +266,7 @@ def main():
         job2_new_id = DockerLayer.start_container(
             IMAGE_NAME, "job2_new", serve_container_cmd, 0, 40, SERVE_VOLUMES, envs=serve_envs
         )
-        job3_id = DockerLayer.start_container(IMAGE_NAME, "job3", cmd_job3, 0, 60, volumes)
+        job3_id = DockerLayer.start_container(IMAGE_NAME, "job3", serve_job3_cmd, 0, 60, SERVE_VOLUMES, envs=serve_envs)
 
         # 4. Wait for Job2_new to actually use the GPU before switching
         start_time = time.time()
