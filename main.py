@@ -241,9 +241,9 @@ def main():
         # ----------------------------------------------------------------
 
         # Build the commands for serve-gpu-check mode (all scripts from jobs/ folder)
-        serve_job2_cmd = f"bash -c 'cd {SERVE_WORKDIR} && {SERVE_INFERENCE_CMD}'"
-        serve_job1_cmd = f"bash -c 'cd {SERVE_WORKDIR} && python job1.py'"
-        serve_job3_cmd = f"bash -c 'cd {SERVE_WORKDIR} && python job3.py'"
+        serve_job2_cmd = f"python {SERVE_CONTAINER_JOBS_DIR}/{SERVE_INFERENCE_CMD}"
+        serve_job1_cmd = f"python {SERVE_CONTAINER_JOBS_DIR}/job1.py"
+        serve_job3_cmd = f"python {SERVE_CONTAINER_JOBS_DIR}/job3.py"
         serve_envs = {"PYTHONUNBUFFERED": "1"}
 
         # Create the router
