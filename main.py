@@ -31,13 +31,13 @@ SERVE_CONTAINER_JOBS_DIR = "/app/serve-jobs"
 #   -v ~/mlProfiler:/root/mlprofiler
 #   -v /opt/nvidia/nsight-systems/2023.3.3:/nsys
 HOME_DIR = os.path.expanduser("~")
-SERVE_VOLUMES = {
-    '/tmp/nvidia-mps':                            {'bind': '/tmp/nvidia-mps', 'mode': 'rw'},
-    os.path.join(HOME_DIR, '.cache/huggingface'): {'bind': '/root/.cache/huggingface', 'mode': 'rw'},
-    os.path.join(HOME_DIR, '.cache/torch'):       {'bind': '/root/.cache/torch', 'mode': 'rw'},
-    os.path.join(HOME_DIR, 'mlProfiler'):         {'bind': '/root/mlprofiler', 'mode': 'rw'},
-    '/opt/nvidia/nsight-systems/2023.3.3':        {'bind': '/nsys', 'mode': 'ro'},
-}
+# SERVE_VOLUMES = {
+#     '/tmp/nvidia-mps':                            {'bind': '/tmp/nvidia-mps', 'mode': 'rw'},
+#     os.path.join(HOME_DIR, '.cache/huggingface'): {'bind': '/root/.cache/huggingface', 'mode': 'rw'},
+#     os.path.join(HOME_DIR, '.cache/torch'):       {'bind': '/root/.cache/torch', 'mode': 'rw'},
+#     os.path.join(HOME_DIR, 'mlProfiler'):         {'bind': '/root/mlprofiler', 'mode': 'rw'},
+#     '/opt/nvidia/nsight-systems/2023.3.3':        {'bind': '/nsys', 'mode': 'ro'},
+# }
 
 # The inference command to run inside the container
 SERVE_INFERENCE_CMD = (
@@ -97,7 +97,12 @@ def main():
         CHECKPOINT_HOST_DIR: {'bind': CHECKPOINT_MOUNT_DIR, 'mode': 'rw'},
         '/tmp/nvidia-mps': {'bind': '/tmp/nvidia-mps', 'mode': 'rw'},
         TRAIN_JOBS_DIR: {'bind': TRAIN_CONTAINER_JOBS_DIR, 'mode': 'ro'},
-        SERVE_JOBS_DIR: {'bind': SERVE_CONTAINER_JOBS_DIR, 'mode': 'ro'}
+        SERVE_JOBS_DIR: {'bind': SERVE_CONTAINER_JOBS_DIR, 'mode': 'ro'},
+        '/tmp/nvidia-mps':                            {'bind': '/tmp/nvidia-mps', 'mode': 'rw'},
+        os.path.join(HOME_DIR, '.cache/huggingface'): {'bind': '/root/.cache/huggingface', 'mode': 'rw'},
+        os.path.join(HOME_DIR, '.cache/torch'):       {'bind': '/root/.cache/torch', 'mode': 'rw'},
+        os.path.join(HOME_DIR, 'mlProfiler'):         {'bind': '/root/mlprofiler', 'mode': 'rw'},
+        '/opt/nvidia/nsight-systems/2023.3.3':        {'bind': '/nsys', 'mode': 'ro'}
         # '/home/node4/peace-scheduler-master/framework.py': {'bind': CONTAINER_JOBS_DIR, 'mode': 'ro'}  # If your framework code is in a separate directory
     }
     
@@ -176,7 +181,7 @@ def main():
 
 
         # Build the commands for serve-gpu-check mode (all scripts from jobs/ folder)
-        serve_job2_cmd = f"python {SERVE_CONTAINER_JOBS_DIR}/recommend-inference.py --batch_size 2 --model_name bert-base-cased --profile_nstep 10000 --log_dir test"
+        serve_job2_cmd = f"bash -c 'cd /root/mlprofiler/workloads/inference && python {SERVE_CONTAINER_JOBS_DIR}/recommend-inference.py --batch_size 2 --model_name bert-base-cased --profile_nstep 10000 --log_dir test'"
         serve_job1_cmd = f"python {SERVE_CONTAINER_JOBS_DIR}/job1.py"
         serve_job3_cmd = f"python {SERVE_CONTAINER_JOBS_DIR}/job3.py"
         serve_envs = {"PYTHONUNBUFFERED": "1"}
