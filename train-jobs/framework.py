@@ -39,14 +39,14 @@ class CheckpointManager:
         """Forces a save and kills the process immediately."""
         print(f"💾 [FRAMEWORK] Saving partial state (Epoch {current_epoch}) to {self.save_path}...")
         os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
-        time_start_save_checkpoint = time.time()
+        time_start_save_checkpoint = time()
         torch.save({
             'epoch': current_epoch, # Save current epoch so we resume here
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'loss': current_loss,
         }, self.save_path)
-        time_end_save_checkpoint = time.time()
+        time_end_save_checkpoint = time()
         print(f"⏱️ [FRAMEWORK] Time taken to save checkpoint: {time_end_save_checkpoint - time_start_save_checkpoint:.4f} seconds")
         
         print("🛑 [FRAMEWORK] State saved. Exiting process now.")
