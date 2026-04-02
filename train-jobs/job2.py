@@ -25,6 +25,7 @@ def main():
     parser.add_argument('--save_path', type=str, default='./checkpoints/job2.pt')
     parser.add_argument('--resume_from', type=str, default=None)
     parser.add_argument('--max_epochs', type=int, default=10000)
+    parser.add_argument('--batch_size', type=int, default=64)
     args = parser.parse_args()
 
     # 1. Setup
@@ -40,7 +41,7 @@ def main():
     # 3. Data
     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
     trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
-    trainloader = torch.utils.data.DataLoader(trainset, batch_size=64, shuffle=True, num_workers=0)
+    trainloader = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=0)
 
     # 4. Loop
     logging.info(f"Starting Loop from Epoch {manager.start_epoch}...")
