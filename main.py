@@ -135,7 +135,7 @@ def main():
         logger.info("Waiting for Job 1 to finish...")
         Monitor.wait_for_any_exit([job1_id])
         logger.info("Job 1 finished.")
-        # debug_logs(job1_id, "job1")
+        debug_logs(job1_id, "job1")
 
         # time_afterjob1_exits = time.time()
         # logger.info(f"[TIMER] Time printed after job1 finishes: {time_afterjob1_exits - time_after_start_initial_containers:.4f} seconds")
@@ -152,7 +152,7 @@ def main():
         # Wait for it to save and die
         Monitor.wait_for_any_exit([job2_old_id])
         logger.info("Job 2 Old has successfully checkpointed and exited.")
-        # debug_logs(job2_old_id, "job2_old")
+        debug_logs(job2_old_id, "job2_old")
 
         # time_after_job2_old_exits = time.time()
         # logger.info(f"[TIMER] Time printed after job2_old finishes: {time_after_job2_old_exits - time_after_sending_signal:.4f} seconds")
@@ -177,8 +177,8 @@ def main():
         Monitor.wait_for_any_exit([job3_id])
         
         # Dump logs to show resume proof
-        # debug_logs(job2_new_id, "job2_new")
-        # debug_logs(job3_id, "job3")
+        debug_logs(job2_new_id, "job2_new")
+        debug_logs(job3_id, "job3")
         
         # Cleanup
         DockerLayer.stop_and_remove(job2_new_id)
