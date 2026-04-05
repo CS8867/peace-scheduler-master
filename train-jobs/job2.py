@@ -13,11 +13,11 @@ from framework import CheckpointManager  # <--- The only "Framework" touchpoint
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - JOB2 - %(message)s', force=True)
 
 def main():
-    job2_standalone_start = time.time()
+    
 
-    def log_standalone_time():
-        elapsed = time.time() - job2_standalone_start
-        logging.info(f"[TIMER] job2_standalone_time: {elapsed:.4f} seconds")
+    # def log_standalone_time():
+    #     elapsed = time.time() - job2_standalone_start
+    #     logging.info(f"[TIMER] job2_standalone_time: {elapsed:.4f} seconds")
 
     atexit.register(log_standalone_time)
 
@@ -39,13 +39,16 @@ def main():
     manager = CheckpointManager(net, optimizer, args.save_path, args.resume_from)
 
     # 3. Data
+    time_to_load_data_start = time.time()
     transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
     trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
     trainloader = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=0)
+    time_to_load_data_end = time.time()
+    logging.info(f"[TIMER] Time to load data: {time_to_load_data_end - time_to_load_data_start:.4f} seconds")
 
     # 4. Loop
     logging.info(f"Starting Loop from Epoch {manager.start_epoch}...")
-    
+    job2_standalone_start = time.time()
     for epoch in range(manager.start_epoch, args.max_epochs):
         running_loss = 0.0
         
@@ -64,6 +67,9 @@ def main():
             running_loss += loss.item()
 
         logging.info(f"Finished Epoch {epoch}. Loss: {running_loss/100:.3f}")
+
+    elapsed = time.time() - job2_standalone_start
+    logging.info(f"[TIMER] job2_standalone_time: {elapsed:.4f} seconds")
 
 if __name__ == "__main__":
     main()
