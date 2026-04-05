@@ -15,9 +15,9 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - JOB2 - %(message)s
 def main():
     
 
-    # def log_standalone_time():
-    #     elapsed = time.time() - job2_standalone_start
-    #     logging.info(f"[TIMER] job2_standalone_time: {elapsed:.4f} seconds")
+    def log_standalone_time():
+        elapsed = time.time() - job2_standalone_start
+        logging.info(f"[TIMER] job2_standalone_time: {elapsed:.4f} seconds")
 
     atexit.register(log_standalone_time)
 
