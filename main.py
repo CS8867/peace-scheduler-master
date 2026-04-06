@@ -47,6 +47,7 @@ SERVE_INFERENCE_CMD = (
     " --profile_nstep 10000"
     " --log_dir test"
 )
+FIRST_BATCH_LOG_MARKER = "PEACE_EVENT: FIRST_BATCH_STARTED"
 
 # --- LOGGING SETUP (CRITICAL FIX) ---
 # We force logging to stream to Standard Out so you see it in the terminal
@@ -80,9 +81,9 @@ def main():
     parser.add_argument(
         '--mode', 
         type=str, 
-        choices=['train', 'serve', 'serve-gpu-check', 'inference'], 
+        choices=['train', 'serve', 'serve-gpu-check', 'serve-log-check', 'inference'], 
         required=True,
-        help="Select 'train' for model training, 'serve' for real-time inference API, 'serve-gpu-check' for serve with GPU activity probing, or 'inference' for standalone inference workload"
+        help="Select 'train' for model training, 'serve' for real-time inference API, 'serve-gpu-check' for serve with GPU activity probing, 'serve-log-check' for serve with custom first-batch log readiness, or 'inference' for standalone inference workload"
     )
 
     # Optional: specific configs for each mode
@@ -257,6 +258,66 @@ def main():
         # 8. Verify Job2_old is gone
         if not DockerLayer.is_container_running(job2_old_id):
             logger.info("Serve-GPU-Check Workflow Complete. Job2_old successfully replaced.")
+        else:
+            logger.error("Job2_old is still running! Something went wrong.")
+
+    elif args.mode == 'serve-log-check':
+        # ----------------------------------------------------------------
+        # Serve workflow with log-based readiness probing.
+        #   Phase 1: job1 (toy, 50%) + job2_old (inference, 50%)
+        #   Phase 2: job2_new (inference, 40%) + job3 (toy, 60%)
+        #   Switch only after job2_new emits a custom first-batch marker.
+        # ----------------------------------------------------------------
+        serve_job2_cmd = f"bash -c 'cd /root/mlprofiler/workloads/inference && python {SERVE_CONTAINER_JOBS_DIR}/recommend-inference.py --batch_size 2 --model_name bert-base-cased --profile_nstep 10000 --log_dir test'"
+        serve_job1_cmd = f"python {SERVE_CONTAINER_JOBS_DIR}/job1.py"
+        serve_job3_cmd = f"python {SERVE_CONTAINER_JOBS_DIR}/job3.py"
+        serve_envs = {"PYTHONUNBUFFERED": "1"}
+
+        router = Router()
+
+        logger.info(">>> [Log-Check] Launching Initial Jobs (Job1 + Job2 Old)...")
+        job1_id = DockerLayer.start_container(IMAGE_NAME, "job1", serve_job1_cmd, 0, 50, volumes, envs=serve_envs)
+        job2_old_id = DockerLayer.start_container(
+            IMAGE_NAME, "job2_old", serve_job2_cmd, 0, 50, volumes, envs=serve_envs
+        )
+
+        router.set_backend(job2_old_id)
+        logger.info("Router -> Job2 Old")
+
+        logger.info("Waiting for Job 1 to finish...")
+        Monitor.wait_for_any_exit([job1_id])
+        logger.info("Job 1 finished.")
+
+        logger.info(">>> [Log-Check] Launching Phase 2 (Job2 New + Job 3)...")
+        job2_new_id = DockerLayer.start_container(
+            IMAGE_NAME, "job2_new", serve_job2_cmd, 0, 40, volumes, envs=serve_envs
+        )
+        job3_id = DockerLayer.start_container(IMAGE_NAME, "job3", serve_job3_cmd, 0, 60, volumes, envs=serve_envs)
+
+        start_time = time.time()
+        result = Monitor.wait_for_log_message(job2_new_id, FIRST_BATCH_LOG_MARKER)
+        total_time = time.time() - start_time
+
+        if result is None:
+            logger.error("Job2 New never emitted the first-batch marker. Aborting swap.")
+            debug_logs(job2_new_id, "job2_new")
+        else:
+            logger.info(f"Job2 New emitted the first-batch marker after {total_time:.2f}s.")
+
+            switch_start = time.time()
+            router.set_backend(job2_new_id)
+            switch_duration = time.time() - switch_start
+            logger.info(f">>> ROUTER SWITCH DOWNTIME: {switch_duration:.6f} seconds")
+
+            debug_logs(job2_old_id, "job2_old")
+            DockerLayer.stop_and_remove(job2_old_id)
+            logger.info("Job2 Old stopped and removed.")
+
+        debug_logs(job2_new_id, "job2_new")
+        debug_logs(job3_id, "job3")
+
+        if not DockerLayer.is_container_running(job2_old_id):
+            logger.info("Serve-Log-Check Workflow Complete. Job2_old successfully replaced.")
         else:
             logger.error("Job2_old is still running! Something went wrong.")
 

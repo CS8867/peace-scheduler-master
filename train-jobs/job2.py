@@ -12,6 +12,8 @@ from framework import CheckpointManager  # <--- The only "Framework" touchpoint
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - JOB2 - %(message)s', force=True)
 
+FIRST_BATCH_LOG_MARKER = "PEACE_EVENT: FIRST_BATCH_STARTED"
+
 def main():
     
 
@@ -57,6 +59,9 @@ def main():
             # Check for signal before every batch (or every N batches)
             manager.check_if_should_exit(current_epoch=epoch, current_loss=running_loss)
             # ------------------------------
+
+            if epoch == manager.start_epoch and i == 0:
+                logging.info(f"{FIRST_BATCH_LOG_MARKER} epoch={epoch} batch={i}")
 
             inputs, labels = data[0].to(device), data[1].to(device)
             optimizer.zero_grad()

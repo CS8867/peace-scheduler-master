@@ -66,3 +66,33 @@ class Monitor:
                     return container_id
 
             time.sleep(poll_interval)
+
+    @staticmethod
+    def wait_for_log_message(
+        container_id: str,
+        expected_text: str,
+        poll_interval: float = 0.2,
+        timeout: int = 120,
+        tail: int = 100,
+    ) -> str:
+        """
+        Waits until the container emits a specific log marker.
+        Returns the container_id on success, or None on timeout / early exit.
+        """
+        logging.info(f"Monitor: Waiting for log marker '{expected_text}' from container {container_id}.")
+        start_time = time.time()
+
+        while True:
+            if DockerLayer.container_logs_contain(container_id, expected_text, tail=tail):
+                logging.info(f"Monitor: Container {container_id} emitted marker '{expected_text}'.")
+                return container_id
+
+            if not DockerLayer.is_container_running(container_id):
+                logging.error(f"Monitor: Container {container_id} exited before emitting '{expected_text}'.")
+                return None
+
+            if time.time() - start_time > timeout:
+                logging.error(f"Monitor: Timed out waiting for {container_id} to emit '{expected_text}'.")
+                return None
+
+            time.sleep(poll_interval)

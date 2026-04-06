@@ -230,6 +230,19 @@ class DockerLayer:
             return []
 
     @staticmethod
+    def container_logs_contain(container_id: str, expected_text: str, tail: int = 100) -> bool:
+        """
+        Returns True if the container's recent logs contain the expected text.
+        """
+        try:
+            container = client.containers.get(container_id)
+            logs = container.logs(tail=tail).decode("utf-8", errors="replace")
+            return expected_text in logs
+        except Exception as e:
+            logging.error(f"Error checking logs for {container_id}: {str(e)}")
+            return False
+
+    @staticmethod
     def has_inference_output(container_id: str) -> bool:
         """
         Returns True if the container has produced at least one inference
@@ -237,10 +250,4 @@ class DockerLayer:
         This is used as a container-level readiness signal by the Router
         so the inference script itself does not need modification.
         """
-        try:
-            container = client.containers.get(container_id)
-            logs = container.logs(tail=50).decode("utf-8", errors="replace")
-            return "predictions:" in logs
-        except Exception as e:
-            logging.error(f"Error checking inference output for {container_id}: {str(e)}")
-            return False
+        return DockerLayer.container_logs_contain(container_id, "predictions:", tail=50)

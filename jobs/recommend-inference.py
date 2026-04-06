@@ -19,6 +19,8 @@ from torch.optim import AdamW
 from datasets import load_dataset
 from tqdm.auto import tqdm
 
+FIRST_BATCH_LOG_MARKER = "PEACE_EVENT: FIRST_BATCH_STARTED"
+
 #import custom functions
 sys.path.append('../..')
 from utils.util import count_parameters
@@ -77,6 +79,8 @@ def inference(args: argparse.Namespace, profiler: MLProfiler = None) -> None:
     steps = 0
     #add batch num in eval_dataloader for loop
     for i, batch in enumerate(eval_dataloader):
+        if steps == 0:
+            logger.log(f"{FIRST_BATCH_LOG_MARKER} step={steps}")
         if steps >= warmup:  
             if args.profile:
                 torch.cuda.nvtx.range_push(f"steps{steps}")
