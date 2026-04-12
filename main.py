@@ -47,6 +47,14 @@ SERVE_INFERENCE_CMD = (
     " --profile_nstep 10000"
     " --log_dir test"
 )
+TRAIN_RECOMMEND_CMD = (
+    "python recommend-train.py"
+    " --batch_size 2"
+    " --model_name bert-base-cased"
+    " --profile_nstep 100"
+    " --log_dir test"
+)
+TRAIN_RECOMMEND_CHECKPOINT = f"{CHECKPOINT_MOUNT_DIR}/recommend_train_ckpt.pt"
 FIRST_BATCH_LOG_MARKER = "PEACE_EVENT: FIRST_BATCH_STARTED"
 
 # --- LOGGING SETUP (CRITICAL FIX) ---
@@ -113,8 +121,21 @@ def main():
     if args.mode == 'train':
         # 1. DEFINE COMMANDS
         cmd_job1 = f"python {TRAIN_CONTAINER_JOBS_DIR}/job1.py"
-        cmd_job2_old = f"python {TRAIN_CONTAINER_JOBS_DIR}/job2.py --save_path {CHECKPOINT_MOUNT_DIR}/job2_ckpt.pt"
-        cmd_job2_new = f"python {TRAIN_CONTAINER_JOBS_DIR}/job2.py --resume_from {CHECKPOINT_MOUNT_DIR}/job2_ckpt.pt --max_epochs 20"
+        train_job2_cmd = (
+            "bash -c 'cd /root/mlprofiler/workloads/train"
+            f" && {TRAIN_RECOMMEND_CMD}'"
+        )
+        train_job2_old_envs = {
+            "PYTHONUNBUFFERED": "1",
+            "PEACE_CHECKPOINT_PATH": TRAIN_RECOMMEND_CHECKPOINT,
+        }
+        train_job2_new_envs = {
+            "PYTHONUNBUFFERED": "1",
+            "PEACE_CHECKPOINT_PATH": TRAIN_RECOMMEND_CHECKPOINT,
+            "PEACE_RESUME_PATH": TRAIN_RECOMMEND_CHECKPOINT,
+        }
+        cmd_job2_old = train_job2_cmd
+        cmd_job2_new = train_job2_cmd
         cmd_job3 = f"python {TRAIN_CONTAINER_JOBS_DIR}/job3.py"
         print("Starting Training Workflow...")
 
@@ -127,7 +148,9 @@ def main():
 
         # 1. Start Initial Jobs
         job1_id = DockerLayer.start_container(IMAGE_NAME, "job1", cmd_job1, 0, 50, volumes)
-        job2_old_id = DockerLayer.start_container(IMAGE_NAME, "job2_old", cmd_job2_old, 0, 50, volumes)
+        job2_old_id = DockerLayer.start_container(
+            IMAGE_NAME, "job2_old", cmd_job2_old, 0, 50, volumes, envs=train_job2_old_envs
+        )
 
         controller_waiting_for_job1_exit_start = time.time()
         # logger.info(f"[TIMER] Time printed after job1_id and job2_old_id have started: {time_after_start_initial_containers - workflow_start_time:.4f} seconds")
@@ -141,16 +164,16 @@ def main():
         controller_waiting_for_job1_exit_end = time.time()
         logger.info(f"[TIMER] Time printed after job1 finishes: {controller_waiting_for_job1_exit_end - controller_waiting_for_job1_exit_start:.4f} seconds")
 
-        # 3. Checkpoint & Kill Job 2 Old (The Workflow You Requested)
+        # 3. Ask Job 2 Old to checkpoint so the replacement workload can resume.
         logger.info(f"Signaling Job 2 Old ({job2_old_id}) to checkpoint and exit...")
         
-        # Send signal (assuming job2 handles SIGUSR1 or SIGTERM to save)
+        # Send a signal so the current training workload saves its state before Phase 2 starts.
         DockerLayer.send_signal(job2_old_id, "SIGUSR1") 
         
         time_after_sending_signal = time.time()
         logger.info(f"[TIMER] Time printed after sending signal to job2_old: {time_after_sending_signal - controller_waiting_for_job1_exit_end:.4f} seconds")
 
-        # Wait for it to save and die
+        # Wait for it to checkpoint and terminate before starting the replacement container.
         Monitor.wait_for_any_exit([job2_old_id])
         logger.info("Job 2 Old has successfully checkpointed and exited.")
         debug_logs(job2_old_id, "job2_old")
@@ -160,7 +183,9 @@ def main():
 
         # 4. Start Next Phase
         logger.info(">>> Launching Phase 2 (Job 2 New + Job 3)...")
-        job2_new_id = DockerLayer.start_container(IMAGE_NAME, "job2_new", cmd_job2_new, 0, 40, volumes)
+        job2_new_id = DockerLayer.start_container(
+            IMAGE_NAME, "job2_new", cmd_job2_new, 0, 40, volumes, envs=train_job2_new_envs
+        )
         job3_id = DockerLayer.start_container(IMAGE_NAME, "job3", cmd_job3, 0, 60, volumes)
 
         time_after_starting_new_containers = time.time()
@@ -177,7 +202,7 @@ def main():
 
         Monitor.wait_for_any_exit([job3_id])
         
-        # Dump logs to show resume proof
+        # Dump logs to confirm the resumed container and the colocated job both completed.
         debug_logs(job2_new_id, "job2_new")
         debug_logs(job3_id, "job3")
         

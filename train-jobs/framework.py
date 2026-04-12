@@ -6,20 +6,33 @@ from time import time
 import torch
 
 class CheckpointManager:
-    def __init__(self, model, optimizer, save_path, resume_path=None):
+    def __init__(
+        self,
+        model,
+        optimizer,
+        save_path,
+        resume_path=None,
+        initial_epoch=0,
+        save_state_hook=None,
+        load_state_hook=None,
+    ):
         self.model = model
         self.optimizer = optimizer
         self.save_path = save_path
         self.stop_requested = False
+        self.save_state_hook = save_state_hook
+        self.load_state_hook = load_state_hook
         
         # Resume Logic
-        self.start_epoch = 0
+        self.start_epoch = initial_epoch
         if resume_path and os.path.exists(resume_path):
             print(f"📦 [FRAMEWORK] Found checkpoint at {resume_path}. Loading...")
             time_start_load_checkpoint = time()
-            ckpt = torch.load(resume_path)
+            ckpt = torch.load(resume_path, map_location="cpu")
             self.model.load_state_dict(ckpt['model_state_dict'])
             self.optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+            if self.load_state_hook is not None:
+                self.load_state_hook(ckpt)
             # If we were interrupted in Epoch 5, we restart Epoch 5.
             self.start_epoch = ckpt['epoch'] 
             time_end_load_checkpoint = time()
@@ -40,12 +53,15 @@ class CheckpointManager:
         print(f"💾 [FRAMEWORK] Saving partial state (Epoch {current_epoch}) to {self.save_path}...")
         os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
         time_start_save_checkpoint = time()
-        torch.save({
+        checkpoint = {
             'epoch': current_epoch, # Save current epoch so we resume here
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
             'loss': current_loss,
-        }, self.save_path)
+        }
+        if self.save_state_hook is not None:
+            checkpoint.update(self.save_state_hook())
+        torch.save(checkpoint, self.save_path)
         time_end_save_checkpoint = time()
         print(f"⏱️ [FRAMEWORK] Time taken to save checkpoint: {time_end_save_checkpoint - time_start_save_checkpoint:.4f} seconds")
         
