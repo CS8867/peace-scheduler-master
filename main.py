@@ -51,7 +51,7 @@ TRAIN_RECOMMEND_CMD = (
     "python recommend-train.py"
     " --batch_size 2"
     " --model_name bert-base-cased"
-    " --profile_nstep 500"
+    " --profile_nstep 3000"
     " --log_dir test"
 )
 TRAIN_RECOMMEND_CHECKPOINT = f"{CHECKPOINT_MOUNT_DIR}/recommend_train_ckpt.pt"
