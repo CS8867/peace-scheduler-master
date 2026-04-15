@@ -164,6 +164,12 @@ def main():
         controller_waiting_for_job1_exit_end = time.time()
         logger.info(f"[TIMER] Time printed after job1 finishes: {controller_waiting_for_job1_exit_end - controller_waiting_for_job1_exit_start:.4f} seconds")
 
+        if not DockerLayer.is_container_running(job2_old_id):
+            logger.info("Job 2 Old finished before Job 1. Skipping replacement spawn.")
+            debug_logs(job2_old_id, "job2_old")
+            logger.info("Training Workflow Complete.")
+            return
+
         # 3. Ask Job 2 Old to checkpoint so the replacement workload can resume.
         logger.info(f"Signaling Job 2 Old ({job2_old_id}) to checkpoint and exit...")
         

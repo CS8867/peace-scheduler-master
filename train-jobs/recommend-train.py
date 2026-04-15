@@ -87,6 +87,10 @@ def train(args: argparse.Namespace, profiler: MLProfiler = None) -> None:
     checkpoint_save_path, checkpoint_resume_path = get_checkpoint_paths()
     checkpoint_runtime = {"steps": 0}
 
+    def stop_profiler_if_needed() -> None:
+        if args.profile:
+            torch.cuda.cudart().cudaProfilerStop()
+
     def save_checkpoint_state():
         return {
             "lr_scheduler_state_dict": lr_scheduler.state_dict(),
@@ -207,15 +211,17 @@ def train(args: argparse.Namespace, profiler: MLProfiler = None) -> None:
             logger.log(f"average step time: {sum(step_process_time) / len(step_process_time):.4f} seconds")
             if args.profile_1step:
                 logger.log(f'profile only 1 step for nightsight compute...')
-                exit(0)
+                checkpoint_runtime["steps"] = steps + 1
+                manager.save_and_exit(current_epoch=epoch, current_loss=running_loss)
             if steps >= warmup:
                 if args.profile:
                     torch.cuda.nvtx.range_pop()
             if args.profile_nstep > 0 and  steps >= args.profile_nstep:
                 #logger.countAverageProcessingTime(step_process_time)
                 logger.log(f"completed {args.profile_nstep} steps, exiting...")
-                torch.cuda.cudart().cudaProfilerStop()
-                exit(0)
+                checkpoint_runtime["steps"] = steps + 1
+                stop_profiler_if_needed()
+                manager.save_and_exit(current_epoch=epoch, current_loss=running_loss)
             steps += 1
             checkpoint_runtime["steps"] = steps
             
@@ -226,7 +232,7 @@ def train(args: argparse.Namespace, profiler: MLProfiler = None) -> None:
         }
         logger.log(f"Epoch {epoch}, Loss: {running_loss / len(train_dataloader)}, Time: {epoch_time:.2f} seconds")
         if args.profile:
-            torch.cuda.cudart().cudaProfilerStop()
+            stop_profiler_if_needed()
             GPUinfo = profiler.getSMIinfobyTask(sys.argv)
             logger.log(f"[Profile]GPU INFO - {GPUinfo}")
             gpuInfoDict = list(GPUinfo.values())[0][0]
