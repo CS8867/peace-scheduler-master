@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import atexit
 import argparse
 from typing import Optional, Tuple
 import evaluate
@@ -40,6 +41,14 @@ def get_checkpoint_paths() -> Tuple[str, Optional[str]]:
 
 def train(args: argparse.Namespace, profiler: MLProfiler = None) -> None:
     logger = MLLogger(args.log_dir, args, __file__)
+    train_start_time = time.time()
+
+    def log_standalone_time() -> None:
+        elapsed = time.time() - train_start_time
+        logger.log(f"[TIMER] recommend_train_standalone_time: {elapsed:.4f} seconds")
+
+    atexit.register(log_standalone_time)
+
     #log all args
     logger.log(f"args={args}")
     logger.log(f"using {args.device}...")
