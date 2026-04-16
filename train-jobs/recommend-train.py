@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import argparse
+from typing import Optional, Tuple
 import evaluate
 import numpy as np
 
@@ -31,7 +32,7 @@ FIRST_BATCH_LOG_MARKER = "PEACE_EVENT: FIRST_BATCH_STARTED"
 DEFAULT_CHECKPOINT_PATH = "./checkpoints/recommend-train.pt"
 
 
-def get_checkpoint_paths() -> tuple[str, str | None]:
+def get_checkpoint_paths() -> Tuple[str, Optional[str]]:
     save_path = os.environ.get("PEACE_CHECKPOINT_PATH", DEFAULT_CHECKPOINT_PATH)
     resume_path = os.environ.get("PEACE_RESUME_PATH")
     return save_path, resume_path
