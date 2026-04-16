@@ -17,7 +17,8 @@ class DockerLayer:
         mps_percentage: int, 
         volumes: Dict[str, Dict[str, str]] = {},
         envs: Dict[str, str] = {},
-        interactive: bool = False
+        interactive: bool = False,
+        workdir: str = None,
     ) -> str:
         """
         Starts a container with specific MPS configuration and mounted volumes.
@@ -47,6 +48,7 @@ class DockerLayer:
                 command=command,
                 name=name,
                 detach=True,                 # Run in background
+                working_dir=workdir,
                 environment=environment,
                 volumes=volumes,             # Mount shared checkpoint folders
                 device_requests=device_requests,
