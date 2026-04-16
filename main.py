@@ -51,7 +51,7 @@ TRAIN_RECOMMEND_CMD = (
     "python recommend-train.py"
     " --batch_size 2"
     " --model_name bert-large-cased"
-    " --profile_nstep 3000"
+    " --profile_nstep 1000"
     " --log_dir test"
 )
 TRAIN_JOB2_CHECKPOINT = f"{CHECKPOINT_MOUNT_DIR}/job2_ckpt.pt"
@@ -128,7 +128,7 @@ def main():
             f"python {TRAIN_CONTAINER_JOBS_DIR}/recommend-train.py"
             " --batch_size 2"
             " --model_name bert-large-cased"
-            " --profile_nstep 3000"
+            " --profile_nstep 1000"
             " --log_dir test"
         )
         cmd_job2_new = cmd_job2_old
