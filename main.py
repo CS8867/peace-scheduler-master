@@ -50,7 +50,7 @@ SERVE_INFERENCE_CMD = (
 TRAIN_RECOMMEND_CMD = (
     "python recommend-train.py"
     " --batch_size 2"
-    " --model_name bert-base-cased"
+    " --model_name bert-large-cased"
     " --profile_nstep 3000"
     " --log_dir test"
 )
@@ -127,7 +127,7 @@ def main():
         cmd_job2_old = (
             f"python {TRAIN_CONTAINER_JOBS_DIR}/recommend-train.py"
             " --batch_size 2"
-            " --model_name bert-base-cased"
+            " --model_name bert-large-cased"
             " --profile_nstep 3000"
             " --log_dir test"
         )
