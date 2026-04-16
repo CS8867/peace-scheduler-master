@@ -123,7 +123,7 @@ def main():
         cmd_job1 = f"python {TRAIN_CONTAINER_JOBS_DIR}/job1.py"
         train_job2_cmd = (
             "bash -c 'cd /root/mlprofiler/workloads/train"
-            f" && {TRAIN_RECOMMEND_CMD}'"
+            f" && exec {TRAIN_RECOMMEND_CMD}'"
         )
         train_job2_old_envs = {
             "PYTHONUNBUFFERED": "1",
