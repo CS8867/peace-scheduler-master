@@ -54,6 +54,7 @@ TRAIN_RECOMMEND_CMD = (
     " --profile_nstep 3000"
     " --log_dir test"
 )
+TRAIN_JOB2_CHECKPOINT = f"{CHECKPOINT_MOUNT_DIR}/job2_ckpt.pt"
 TRAIN_WORKDIR = "/root/mlprofiler/workloads/train"
 TRAIN_RECOMMEND_CHECKPOINT = f"{CHECKPOINT_MOUNT_DIR}/recommend_train_ckpt.pt"
 FIRST_BATCH_LOG_MARKER = "PEACE_EVENT: FIRST_BATCH_STARTED"
@@ -122,24 +123,8 @@ def main():
     if args.mode == 'train':
         # 1. DEFINE COMMANDS
         cmd_job1 = f"python {TRAIN_CONTAINER_JOBS_DIR}/job1.py"
-        train_job2_cmd = (
-            f"python {TRAIN_CONTAINER_JOBS_DIR}/recommend-train.py"
-            " --batch_size 2"
-            " --model_name bert-base-cased"
-            " --profile_nstep 3000"
-            " --log_dir test"
-        )
-        train_job2_old_envs = {
-            "PYTHONUNBUFFERED": "1",
-            "PEACE_CHECKPOINT_PATH": TRAIN_RECOMMEND_CHECKPOINT,
-        }
-        train_job2_new_envs = {
-            "PYTHONUNBUFFERED": "1",
-            "PEACE_CHECKPOINT_PATH": TRAIN_RECOMMEND_CHECKPOINT,
-            "PEACE_RESUME_PATH": TRAIN_RECOMMEND_CHECKPOINT,
-        }
-        cmd_job2_old = train_job2_cmd
-        cmd_job2_new = train_job2_cmd
+        cmd_job2_old = f"python {TRAIN_CONTAINER_JOBS_DIR}/job2.py --save_path {TRAIN_JOB2_CHECKPOINT}"
+        cmd_job2_new = f"python {TRAIN_CONTAINER_JOBS_DIR}/job2.py --resume_from {TRAIN_JOB2_CHECKPOINT} --max_epochs 20"
         cmd_job3 = f"python {TRAIN_CONTAINER_JOBS_DIR}/job3.py"
         print("Starting Training Workflow...")
 
@@ -153,7 +138,7 @@ def main():
         # 1. Start Initial Jobs
         job1_id = DockerLayer.start_container(IMAGE_NAME, "job1", cmd_job1, 0, 50, volumes)
         job2_old_id = DockerLayer.start_container(
-            IMAGE_NAME, "job2_old", cmd_job2_old, 0, 50, volumes, envs=train_job2_old_envs, workdir=TRAIN_WORKDIR
+            IMAGE_NAME, "job2_old", cmd_job2_old, 0, 50, volumes
         )
 
         controller_waiting_for_job1_exit_start = time.time()
@@ -194,7 +179,7 @@ def main():
         # 4. Start Next Phase
         logger.info(">>> Launching Phase 2 (Job 2 New + Job 3)...")
         job2_new_id = DockerLayer.start_container(
-            IMAGE_NAME, "job2_new", cmd_job2_new, 0, 40, volumes, envs=train_job2_new_envs, workdir=TRAIN_WORKDIR
+            IMAGE_NAME, "job2_new", cmd_job2_new, 0, 40, volumes
         )
         job3_id = DockerLayer.start_container(IMAGE_NAME, "job3", cmd_job3, 0, 60, volumes)
 

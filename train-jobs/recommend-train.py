@@ -63,12 +63,15 @@ def train(args: argparse.Namespace, profiler: MLProfiler = None) -> None:
     """
     TODO Count data download & process time
     """
-    
+    time_to_load_data_start = time.time()
+
     vocab_size = 30522  
     dummy_dataset = DummyBertDataset(num_samples=10000, seq_length=512, vocab_size=vocab_size)
     
     train_dataloader = DataLoader(dummy_dataset, shuffle=True, batch_size=args.batch_size)
     #eval_dataloader = DataLoader(small_eval_dataset, batch_size=args.batch_size)
+    time_to_load_data_end = time.time()
+    logger.log(f"[TIMER] Time to load data: {time_to_load_data_end - time_to_load_data_start:.4f} seconds")
 
     """
     end TODO of Counting data download & process time
