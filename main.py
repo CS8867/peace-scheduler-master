@@ -6,6 +6,7 @@ from state import get_state, ContainerStatus
 from docker_layer import DockerLayer
 from monitor import Monitor
 from router import Router
+from scheduler import JobSpec, Scheduler
 import argparse
 
 # Import your workflows
@@ -59,6 +60,7 @@ TRAIN_WORKDIR = "/root/mlprofiler/workloads/train"
 SERVE_WORKDIR = "/root/mlprofiler/workloads/inference"
 TRAIN_RECOMMEND_CHECKPOINT = f"{CHECKPOINT_MOUNT_DIR}/recommend_train_ckpt.pt"
 FIRST_BATCH_LOG_MARKER = "PEACE_EVENT: FIRST_BATCH_STARTED"
+PEACE_CONTAINER_PREFIX = "peace-"
 
 # --- LOGGING SETUP (CRITICAL FIX) ---
 # We force logging to stream to Standard Out so you see it in the terminal
@@ -84,17 +86,55 @@ def debug_logs(container_id, name):
             pass
 
 
+def build_dynamic_train_jobs() -> List[JobSpec]:
+    return [
+        JobSpec(
+            name="train-job1",
+            job_type="train",
+            command=f"python {TRAIN_CONTAINER_JOBS_DIR}/job1.py",
+            gpu_idx=0,
+            mps_percentage=50,
+        ),
+        JobSpec(
+            name="train-recommend",
+            job_type="train",
+            command=(
+                f"python {TRAIN_CONTAINER_JOBS_DIR}/recommend-train.py"
+                " --batch_size 2"
+                " --model_name bert-large-cased"
+                " --profile_nstep 1000"
+                " --log_dir test"
+            ),
+            gpu_idx=0,
+            mps_percentage=50,
+            envs={
+                "PYTHONUNBUFFERED": "1",
+                "PEACE_CHECKPOINT_PATH": TRAIN_RECOMMEND_CHECKPOINT,
+            },
+            workdir=TRAIN_WORKDIR,
+        ),
+        JobSpec(
+            name="train-job3",
+            job_type="train",
+            command=f"python {TRAIN_CONTAINER_JOBS_DIR}/job3.py",
+            gpu_idx=0,
+            mps_percentage=50,
+        ),
+    ]
+
+
 
 def main():
+        
     parser = argparse.ArgumentParser(description="ML System Entry Point")
     
     # Create a 'mode' argument to switch between workflows. --mode train will activate the train workflow, while --mode serve will activate the real-time inference workflow.
     parser.add_argument(
         '--mode', 
         type=str, 
-        choices=['train', 'serve', 'serve-gpu-check', 'serve-log-check', 'inference'], 
+        choices=['train', 'dynamic-train', 'serve', 'serve-gpu-check', 'serve-log-check', 'inference'], 
         required=True,
-        help="Select 'train' for model training, 'serve' for real-time inference API, 'serve-gpu-check' for serve with GPU activity probing, 'serve-log-check' for serve with custom first-batch log readiness, or 'inference' for standalone inference workload"
+        help="Select 'train' for the current role-based training workflow, 'dynamic-train' for the queue-driven scheduler prototype, 'serve' for real-time inference API, 'serve-gpu-check' for serve with GPU activity probing, 'serve-log-check' for serve with custom first-batch log readiness, or 'inference' for standalone inference workload"
     )
 
     # Optional: specific configs for each mode
@@ -152,9 +192,9 @@ def main():
         # workflow_start_time = time.time()
 
         # 1. Start Initial Jobs
-        job1_id = DockerLayer.start_container(IMAGE_NAME, "job1", cmd_job1, 0, 50, volumes)
+        job1_id = DockerLayer.start_container(IMAGE_NAME, "peace-job1", cmd_job1, 0, 50, volumes)
         job2_old_id = DockerLayer.start_container(
-            IMAGE_NAME, "job2_old", cmd_job2_old, 0, 50, volumes, envs=train_job2_old_envs, workdir=TRAIN_WORKDIR
+            IMAGE_NAME, "peace-job2_old", cmd_job2_old, 0, 50, volumes, envs=train_job2_old_envs, workdir=TRAIN_WORKDIR
         )
 
         controller_waiting_for_job1_exit_start = time.time()
@@ -195,9 +235,9 @@ def main():
         # 4. Start Next Phase
         logger.info(">>> Launching Phase 2 (Job 2 New + Job 3)...")
         job2_new_id = DockerLayer.start_container(
-            IMAGE_NAME, "job2_new", cmd_job2_new, 0, 40, volumes, envs=train_job2_new_envs, workdir=TRAIN_WORKDIR
+            IMAGE_NAME, "peace-job2_new", cmd_job2_new, 0, 40, volumes, envs=train_job2_new_envs, workdir=TRAIN_WORKDIR
         )
-        job3_id = DockerLayer.start_container(IMAGE_NAME, "job3", cmd_job3, 0, 60, volumes)
+        job3_id = DockerLayer.start_container(IMAGE_NAME, "peace-job3", cmd_job3, 0, 60, volumes)
 
         time_after_starting_new_containers = time.time()
         logger.info(f"[TIMER] Time printed after starting job2_new and job3: {time_after_starting_new_containers - time_after_job2_old_exits:.4f} seconds")
@@ -222,6 +262,41 @@ def main():
         DockerLayer.stop_and_remove(job3_id)
         logger.info("Training Workflow Complete.")
 
+    elif args.mode == 'dynamic-train':
+        logger.info(">>> Starting Dynamic Training Scheduler...")
+        scheduler = Scheduler(
+            image_name=IMAGE_NAME,
+            volumes=volumes,
+            peace_prefix=PEACE_CONTAINER_PREFIX,
+            max_running_jobs=2,
+        )
+        scheduler.extend(build_dynamic_train_jobs())
+
+        launched = scheduler.reconcile()
+        logger.info("Scheduler launched initial jobs: %s", [job.container_name for job in launched])
+
+        while scheduler.has_pending_jobs() or scheduler.snapshot().running_count > 0:
+            snapshot = scheduler.snapshot()
+
+            if snapshot.running_count < scheduler.max_running_jobs and scheduler.has_pending_jobs():
+                launched = scheduler.reconcile()
+                if launched:
+                    logger.info("Scheduler launched jobs: %s", [job.container_name for job in launched])
+                    snapshot = scheduler.snapshot()
+
+            if snapshot.running_count == 0:
+                if scheduler.has_pending_jobs():
+                    continue
+                break
+
+            running_map = {job.container_id: job.container_name for job in snapshot.running_jobs}
+            finished_id = Monitor.wait_for_any_exit(list(running_map.keys()))
+            finished_name = running_map.get(finished_id, finished_id)
+            logger.info("Scheduler observed exit for %s. Recomputing node state.", finished_name)
+            debug_logs(finished_id, finished_name)
+
+        logger.info("Dynamic Training Scheduler Complete.")
+
     elif args.mode == 'serve-gpu-check':
         # ----------------------------------------------------------------
         # Serve workflow with GPU activity probing + router switch timing.
@@ -244,9 +319,9 @@ def main():
 
         # 1. START INITIAL STATE: Job1 (toy) + Job2_old (inference) at 50/50 MPS
         logger.info(">>> [GPU-Check] Launching Initial Jobs (Job1 + Job2 Old)...")
-        job1_id = DockerLayer.start_container(IMAGE_NAME, "job1", serve_job1_cmd, 0, 50, volumes, envs=serve_envs)
+        job1_id = DockerLayer.start_container(IMAGE_NAME, "peace-job1", serve_job1_cmd, 0, 50, volumes, envs=serve_envs)
         job2_old_id = DockerLayer.start_container(
-            IMAGE_NAME, "job2_old", serve_job2_cmd, 0, 50, volumes, envs=serve_envs
+            IMAGE_NAME, "peace-job2_old", serve_job2_cmd, 0, 50, volumes, envs=serve_envs
         )
 
         # Point router to job2_old
@@ -261,9 +336,9 @@ def main():
         # 3. Spawn Job2_new and Job3 with revised MPS partitions
         logger.info(">>> [GPU-Check] Launching Phase 2 (Job2 New + Job 3)...")
         job2_new_id = DockerLayer.start_container(
-            IMAGE_NAME, "job2_new", serve_job2_cmd, 0, 40, volumes, envs=serve_envs
+            IMAGE_NAME, "peace-job2_new", serve_job2_cmd, 0, 40, volumes, envs=serve_envs
         )
-        job3_id = DockerLayer.start_container(IMAGE_NAME, "job3", serve_job3_cmd, 0, 60, volumes, envs=serve_envs)
+        job3_id = DockerLayer.start_container(IMAGE_NAME, "peace-job3", serve_job3_cmd, 0, 60, volumes, envs=serve_envs)
 
         # 4. Wait for Job2_new to actually use the GPU before switching
         start_time = time.time()
@@ -372,7 +447,7 @@ def main():
         #     -v ... nba556677/ml_tasks:latest bash
         container_id = DockerLayer.start_container(
             image=IMAGE_NAME,
-            name="w2",
+            name="peace-w2",
             command="bash",          # keeps the container alive
             gpu_idx=0,
             mps_percentage=50,
@@ -399,6 +474,26 @@ def main():
         # Cleanup
         DockerLayer.stop_and_remove(container_id)
         logger.info("Inference Workflow Complete.")
+
+    elif args.mode == 'general':
+        logger.info(">>> Starting General Monitor Test Mode...")
+        # Launch two PEACE jobs (simple dummy jobs)
+        job1_id = DockerLayer.start_container(IMAGE_NAME, "peace-jobA", f"python {TRAIN_CONTAINER_JOBS_DIR}/job1.py", 0, 50, volumes)
+        job2_id = DockerLayer.start_container(IMAGE_NAME, "peace-jobB", f"python {TRAIN_CONTAINER_JOBS_DIR}/job3.py", 0, 50, volumes)
+
+        # Give containers a moment to start
+        time.sleep(5)
+
+        # Call monitor methods
+        node_state = Monitor.get_peace_node_state()
+        running_count = Monitor.get_peace_running_job_count()
+        logger.info(f"[GENERAL MODE] PEACE node state: {node_state}")
+        logger.info(f"[GENERAL MODE] PEACE running job count: {running_count}")
+
+        # Cleanup
+        DockerLayer.stop_and_remove(job1_id)
+        DockerLayer.stop_and_remove(job2_id)
+        logger.info("General Monitor Test Complete.")
 
 if __name__ == "__main__":
     main()

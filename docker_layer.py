@@ -1,12 +1,45 @@
 import docker
 import logging
 import time
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 # Initialize the Docker client (communicates with the Docker Daemon on your machine)
 client = docker.from_env()
 
 class DockerLayer:
+
+    @staticmethod
+    def list_containers(all_containers: bool = False, name_prefix: Optional[str] = None) -> List[Dict[str, object]]:
+        """
+        Returns lightweight metadata for Docker containers, optionally filtered by name prefix.
+        """
+        containers = client.containers.list(all=all_containers)
+        results = []
+
+        for container in containers:
+            if name_prefix and not container.name.startswith(name_prefix):
+                continue
+
+            env_items = container.attrs.get("Config", {}).get("Env", [])
+            env_map = {}
+            for item in env_items:
+                if "=" not in item:
+                    continue
+                key, value = item.split("=", 1)
+                env_map[key] = value
+
+            results.append(
+                {
+                    "id": container.short_id,
+                    "name": container.name,
+                    "status": container.status,
+                    "image": container.image.tags[0] if container.image.tags else container.image.short_id,
+                    "gpu_idx": env_map.get("NVIDIA_VISIBLE_DEVICES"),
+                    "mps_percentage": env_map.get("CUDA_MPS_ACTIVE_THREAD_PERCENTAGE"),
+                }
+            )
+
+        return results
     
     @staticmethod
     def start_container(

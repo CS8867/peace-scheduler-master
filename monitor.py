@@ -1,10 +1,66 @@
 import time
 import logging
-from typing import List
+from dataclasses import dataclass
+from typing import List, Optional
 from docker_layer import DockerLayer
 import subprocess
 
+
+@dataclass
+class PeaceRunningJob:
+    container_id: str
+    container_name: str
+    job_name: str
+    status: str
+    gpu_idx: Optional[int]
+    mps_percentage: Optional[int]
+
+
+@dataclass
+class PeaceNodeState:
+    running_jobs: List[PeaceRunningJob]
+
+    @property
+    def running_count(self) -> int:
+        return len(self.running_jobs)
+
 class Monitor:
+    @staticmethod
+    def get_peace_node_state(name_prefix: str = "peace-") -> PeaceNodeState:
+        """
+        Returns the currently running PEACE-managed containers on the node.
+        """
+        containers = DockerLayer.list_containers(all_containers=False, name_prefix=name_prefix)
+        running_jobs = []
+
+        for container in containers:
+            gpu_idx = container.get("gpu_idx")
+            mps_percentage = container.get("mps_percentage")
+            running_jobs.append(
+                PeaceRunningJob(
+                    container_id=str(container["id"]),
+                    container_name=str(container["name"]),
+                    job_name=str(container["name"])[len(name_prefix):],
+                    status=str(container["status"]),
+                    gpu_idx=int(gpu_idx) if gpu_idx is not None and str(gpu_idx).isdigit() else None,
+                    mps_percentage=int(mps_percentage) if mps_percentage is not None and str(mps_percentage).isdigit() else None,
+                )
+            )
+
+        logging.info(
+            "Monitor: PEACE node state -> %s running job(s): %s",
+            len(running_jobs),
+            [job.container_name for job in running_jobs],
+        )
+        return PeaceNodeState(running_jobs=running_jobs)
+
+    @staticmethod
+    def get_peace_running_job_count(name_prefix: str = "peace-") -> int:
+        """
+        Returns the number of running PEACE-managed containers on the node.
+        """
+        return Monitor.get_peace_node_state(name_prefix=name_prefix).running_count
+
     @staticmethod
     def wait_for_any_exit(container_ids: List[str], poll_interval: int = 2) -> str:
         """
