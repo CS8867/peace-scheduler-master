@@ -132,7 +132,7 @@ def main():
     parser.add_argument(
         '--mode', 
         type=str, 
-        choices=['train', 'dynamic-train', 'serve', 'serve-gpu-check', 'serve-log-check', 'inference'], 
+        choices=['train', 'dynamic-train', 'serve', 'serve-gpu-check', 'serve-log-check', 'inference', 'general'], 
         required=True,
         help="Select 'train' for the current role-based training workflow, 'dynamic-train' for the queue-driven scheduler prototype, 'serve' for real-time inference API, 'serve-gpu-check' for serve with GPU activity probing, 'serve-log-check' for serve with custom first-batch log readiness, or 'inference' for standalone inference workload"
     )
