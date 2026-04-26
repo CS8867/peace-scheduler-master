@@ -262,40 +262,40 @@ def main():
         DockerLayer.stop_and_remove(job3_id)
         logger.info("Training Workflow Complete.")
 
-    elif args.mode == 'dynamic-train':
-        logger.info(">>> Starting Dynamic Training Scheduler...")
-        scheduler = Scheduler(
-            image_name=IMAGE_NAME,
-            volumes=volumes,
-            peace_prefix=PEACE_CONTAINER_PREFIX,
-            max_running_jobs=2,
-        )
-        scheduler.extend(build_dynamic_train_jobs())
+    # elif args.mode == 'dynamic-train':
+    #     logger.info(">>> Starting Dynamic Training Scheduler...")
+    #     scheduler = Scheduler(
+    #         image_name=IMAGE_NAME,
+    #         volumes=volumes,
+    #         peace_prefix=PEACE_CONTAINER_PREFIX,
+    #         max_running_jobs=2,
+    #     )
+    #     scheduler.extend(build_dynamic_train_jobs())
 
-        launched = scheduler.reconcile()
-        logger.info("Scheduler launched initial jobs: %s", [job.container_name for job in launched])
+    #     launched = scheduler.reconcile()
+    #     logger.info("Scheduler launched initial jobs: %s", [job.container_name for job in launched])
 
-        while scheduler.has_pending_jobs() or scheduler.snapshot().running_count > 0:
-            snapshot = scheduler.snapshot()
+    #     while scheduler.has_pending_jobs() or scheduler.snapshot().running_count > 0:
+    #         snapshot = scheduler.snapshot()
 
-            if snapshot.running_count < scheduler.max_running_jobs and scheduler.has_pending_jobs():
-                launched = scheduler.reconcile()
-                if launched:
-                    logger.info("Scheduler launched jobs: %s", [job.container_name for job in launched])
-                    snapshot = scheduler.snapshot()
+    #         if snapshot.running_count < scheduler.max_running_jobs and scheduler.has_pending_jobs():
+    #             launched = scheduler.reconcile()
+    #             if launched:
+    #                 logger.info("Scheduler launched jobs: %s", [job.container_name for job in launched])
+    #                 snapshot = scheduler.snapshot()
 
-            if snapshot.running_count == 0:
-                if scheduler.has_pending_jobs():
-                    continue
-                break
+    #         if snapshot.running_count == 0:
+    #             if scheduler.has_pending_jobs():
+    #                 continue
+    #             break
 
-            running_map = {job.container_id: job.container_name for job in snapshot.running_jobs}
-            finished_id = Monitor.wait_for_any_exit(list(running_map.keys()))
-            finished_name = running_map.get(finished_id, finished_id)
-            logger.info("Scheduler observed exit for %s. Recomputing node state.", finished_name)
-            debug_logs(finished_id, finished_name)
+    #         running_map = {job.container_id: job.container_name for job in snapshot.running_jobs}
+    #         finished_id = Monitor.wait_for_any_exit(list(running_map.keys()))
+    #         finished_name = running_map.get(finished_id, finished_id)
+    #         logger.info("Scheduler observed exit for %s. Recomputing node state.", finished_name)
+    #         debug_logs(finished_id, finished_name)
 
-        logger.info("Dynamic Training Scheduler Complete.")
+    #     logger.info("Dynamic Training Scheduler Complete.")
 
     elif args.mode == 'serve-gpu-check':
         # ----------------------------------------------------------------
