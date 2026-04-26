@@ -86,41 +86,41 @@ def debug_logs(container_id, name):
             pass
 
 
-def build_dynamic_train_jobs() -> List[JobSpec]:
-    return [
-        JobSpec(
-            name="train-job1",
-            job_type="train",
-            command=f"python {TRAIN_CONTAINER_JOBS_DIR}/job1.py",
-            gpu_idx=0,
-            mps_percentage=50,
-        ),
-        JobSpec(
-            name="train-recommend",
-            job_type="train",
-            command=(
-                f"python {TRAIN_CONTAINER_JOBS_DIR}/recommend-train.py"
-                " --batch_size 2"
-                " --model_name bert-large-cased"
-                " --profile_nstep 1000"
-                " --log_dir test"
-            ),
-            gpu_idx=0,
-            mps_percentage=50,
-            envs={
-                "PYTHONUNBUFFERED": "1",
-                "PEACE_CHECKPOINT_PATH": TRAIN_RECOMMEND_CHECKPOINT,
-            },
-            workdir=TRAIN_WORKDIR,
-        ),
-        JobSpec(
-            name="train-job3",
-            job_type="train",
-            command=f"python {TRAIN_CONTAINER_JOBS_DIR}/job3.py",
-            gpu_idx=0,
-            mps_percentage=50,
-        ),
-    ]
+# def build_dynamic_train_jobs() -> List[JobSpec]:
+#     return [
+#         JobSpec(
+#             name="train-job1",
+#             job_type="train",
+#             command=f"python {TRAIN_CONTAINER_JOBS_DIR}/job1.py",
+#             gpu_idx=0,
+#             mps_percentage=50,
+#         ),
+#         JobSpec(
+#             name="train-recommend",
+#             job_type="train",
+#             command=(
+#                 f"python {TRAIN_CONTAINER_JOBS_DIR}/recommend-train.py"
+#                 " --batch_size 2"
+#                 " --model_name bert-large-cased"
+#                 " --profile_nstep 1000"
+#                 " --log_dir test"
+#             ),
+#             gpu_idx=0,
+#             mps_percentage=50,
+#             envs={
+#                 "PYTHONUNBUFFERED": "1",
+#                 "PEACE_CHECKPOINT_PATH": TRAIN_RECOMMEND_CHECKPOINT,
+#             },
+#             workdir=TRAIN_WORKDIR,
+#         ),
+#         JobSpec(
+#             name="train-job3",
+#             job_type="train",
+#             command=f"python {TRAIN_CONTAINER_JOBS_DIR}/job3.py",
+#             gpu_idx=0,
+#             mps_percentage=50,
+#         ),
+#     ]
 
 
 
