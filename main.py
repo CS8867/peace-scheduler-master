@@ -50,7 +50,7 @@ SERVE_INFERENCE_CMD = (
     " --log_dir test"
 )
 TRAIN_RECOMMEND_CMD = (
-    "python recommend-train.py"
+    f"python {TRAIN_CONTAINER_JOBS_DIR}/recommend-train.py"
     " --batch_size 2"
     " --model_name bert-large-cased"
     " --profile_nstep 1000"
@@ -87,10 +87,45 @@ def debug_logs(container_id, name):
             pass
 
 
-def build_dynamic_jobs() -> List[JobSpec]:
+def build_dynamic_training_jobs() -> List[JobSpec]:
     """
-    Queue entries are tagged by workload type and carry their own MPS partition.
-    Later, PEACE can replace these fixed percentages before enqueueing.
+    Logical training queue. The scheduler redeploys the surviving training job
+    internally when a slot opens; the queue does not contain "*_new" jobs.
+    """
+    return [
+        JobSpec(
+            name="train-job1",
+            job_type="training",
+            command=f"python {TRAIN_CONTAINER_JOBS_DIR}/job1.py",
+            gpu_idx=0,
+            mps_percentage=50,
+        ),
+        JobSpec(
+            name="train-recommend",
+            job_type="training",
+            command=TRAIN_RECOMMEND_CMD,
+            gpu_idx=0,
+            mps_percentage=50,
+            envs={
+                "PYTHONUNBUFFERED": "1",
+                "PEACE_CHECKPOINT_PATH": TRAIN_RECOMMEND_CHECKPOINT,
+            },
+            workdir=TRAIN_WORKDIR,
+        ),
+        JobSpec(
+            name="train-job3",
+            job_type="training",
+            command=f"python {TRAIN_CONTAINER_JOBS_DIR}/job3.py",
+            gpu_idx=0,
+            mps_percentage=60,
+        ),
+    ]
+
+
+def build_dynamic_inference_jobs() -> List[JobSpec]:
+    """
+    Logical inference queue. The scheduler redeploys the surviving inference job
+    internally when a slot opens; the queue does not contain "*_new" jobs.
     """
     serve_job_cmd = (
         f"bash -c 'cd {SERVE_WORKDIR} && python {SERVE_CONTAINER_JOBS_DIR}/recommend-inference.py"
@@ -118,18 +153,6 @@ def build_dynamic_jobs() -> List[JobSpec]:
             readiness_log_marker=FIRST_BATCH_LOG_MARKER,
         ),
         JobSpec(
-            name="train-recommend",
-            job_type="training",
-            command=TRAIN_RECOMMEND_CMD,
-            gpu_idx=0,
-            mps_percentage=40,
-            envs={
-                "PYTHONUNBUFFERED": "1",
-                "PEACE_CHECKPOINT_PATH": TRAIN_RECOMMEND_CHECKPOINT,
-            },
-            workdir=TRAIN_WORKDIR,
-        ),
-        JobSpec(
             name="train-job3",
             job_type="training",
             command=f"python {TRAIN_CONTAINER_JOBS_DIR}/job3.py",
@@ -137,6 +160,14 @@ def build_dynamic_jobs() -> List[JobSpec]:
             mps_percentage=60,
         ),
     ]
+
+
+def build_dynamic_jobs(workflow: str) -> List[JobSpec]:
+    if workflow == "training":
+        return build_dynamic_training_jobs()
+    if workflow == "inference":
+        return build_dynamic_inference_jobs()
+    raise ValueError(f"Unsupported dynamic workflow: {workflow}")
 
 
 
@@ -148,13 +179,20 @@ def main():
     parser.add_argument(
         '--mode', 
         type=str, 
-        choices=['train', 'dynamic-train', 'serve', 'serve-gpu-check', 'serve-log-check', 'inference', 'general'], 
+        choices=['train', 'dynamic-train', 'serve', 'serve-gpu-check', 'serve-log-check', 'inference', 'general', 'monitor-check'], 
         required=True,
         help="Select 'train' for the current role-based training workflow, 'dynamic-train' for the queue-driven scheduler prototype, 'serve' for real-time inference API, 'serve-gpu-check' for serve with GPU activity probing, 'serve-log-check' for serve with custom first-batch log readiness, or 'inference' for standalone inference workload"
     )
 
     # Optional: specific configs for each mode
     parser.add_argument('--config', type=str, default='config.yaml', help="Path to config file")
+    parser.add_argument(
+        '--dynamic-workflow',
+        type=str,
+        choices=['training', 'inference'],
+        default='training',
+        help="Select which replacement workflow the dynamic scheduler should exercise."
+    )
 
     args = parser.parse_args()
 
@@ -286,7 +324,7 @@ def main():
             peace_prefix=PEACE_CONTAINER_PREFIX,
             max_running_jobs=2,
         )
-        scheduler.extend(build_dynamic_jobs())
+        scheduler.extend(build_dynamic_jobs(args.dynamic_workflow))
 
         while scheduler.has_work():
             launches = scheduler.step()
@@ -498,6 +536,42 @@ def main():
         DockerLayer.stop_and_remove(job1_id)
         DockerLayer.stop_and_remove(job2_id)
         logger.info("General Monitor Test Complete.")
+
+    elif args.mode == 'monitor-check':
+        logger.info(">>> Starting Monitor Check Mode...")
+        job1_id = DockerLayer.start_container(
+            IMAGE_NAME,
+            "peace-monitor-train-job1",
+            f"python {TRAIN_CONTAINER_JOBS_DIR}/job1.py",
+            0,
+            50,
+            volumes,
+        )
+        job2_id = DockerLayer.start_container(
+            IMAGE_NAME,
+            "peace-monitor-infer-job3",
+            f"python {SERVE_CONTAINER_JOBS_DIR}/job3.py",
+            0,
+            50,
+            volumes,
+        )
+
+        node_state = Monitor.wait_for_stable_peace_node_state(expected_count=2)
+        logger.info("[MONITOR CHECK] running_count=%s", node_state.running_count)
+        for job in node_state.running_jobs:
+            logger.info(
+                "[MONITOR CHECK] container_id=%s name=%s job_name=%s status=%s gpu_idx=%s mps=%s",
+                job.container_id,
+                job.container_name,
+                job.job_name,
+                job.status,
+                job.gpu_idx,
+                job.mps_percentage,
+            )
+
+        DockerLayer.stop_and_remove(job1_id)
+        DockerLayer.stop_and_remove(job2_id)
+        logger.info("Monitor Check Complete.")
 
 if __name__ == "__main__":
     main()
