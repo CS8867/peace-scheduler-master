@@ -26,6 +26,24 @@ class PeaceNodeState:
 
 class Monitor:
     @staticmethod
+    def _node_state_signature(node_state: PeaceNodeState) -> tuple:
+        """
+        Returns a comparable fingerprint for the currently running PEACE jobs.
+        """
+        return tuple(
+            sorted(
+                (
+                    job.container_id,
+                    job.container_name,
+                    job.status,
+                    job.gpu_idx,
+                    job.mps_percentage,
+                )
+                for job in node_state.running_jobs
+            )
+        )
+
+    @staticmethod
     def get_peace_node_state(name_prefix: str = "peace-") -> PeaceNodeState:
         """
         Returns the currently running PEACE-managed containers on the node.
@@ -60,6 +78,58 @@ class Monitor:
         Returns the number of running PEACE-managed containers on the node.
         """
         return Monitor.get_peace_node_state(name_prefix=name_prefix).running_count
+
+    @staticmethod
+    def wait_for_stable_peace_node_state(
+        name_prefix: str = "peace-",
+        expected_count: Optional[int] = None,
+        stable_polls: int = 3,
+        poll_interval: float = 1.0,
+        timeout: int = 60,
+    ) -> PeaceNodeState:
+        """
+        Waits until the PEACE container set is unchanged across several polls.
+
+        If expected_count is provided, stability only starts counting after the
+        monitor observes that many running PEACE containers.
+        """
+        logging.info(
+            "Monitor: Waiting for stable PEACE node state%s.",
+            f" with {expected_count} running job(s)" if expected_count is not None else "",
+        )
+        start_time = time.time()
+        previous_signature = None
+        unchanged_polls = 0
+        latest_state = PeaceNodeState(running_jobs=[])
+
+        while True:
+            latest_state = Monitor.get_peace_node_state(name_prefix=name_prefix)
+            signature = Monitor._node_state_signature(latest_state)
+            count_matches = expected_count is None or latest_state.running_count == expected_count
+
+            if count_matches and signature == previous_signature:
+                unchanged_polls += 1
+            elif count_matches:
+                unchanged_polls = 1
+            else:
+                unchanged_polls = 0
+
+            if count_matches and unchanged_polls >= stable_polls:
+                logging.info(
+                    "Monitor: Stable PEACE node state reached with %s running job(s): %s",
+                    latest_state.running_count,
+                    [job.container_name for job in latest_state.running_jobs],
+                )
+                return latest_state
+
+            if time.time() - start_time > timeout:
+                raise TimeoutError(
+                    "Timed out waiting for stable PEACE node state "
+                    f"(expected_count={expected_count}, last_count={latest_state.running_count})"
+                )
+
+            previous_signature = signature
+            time.sleep(poll_interval)
 
     @staticmethod
     def wait_for_any_exit(container_ids: List[str], poll_interval: int = 2) -> str:

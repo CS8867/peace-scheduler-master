@@ -2,6 +2,7 @@ import time
 import logging
 import sys
 import os
+from typing import List
 from state import get_state, ContainerStatus
 from docker_layer import DockerLayer
 from monitor import Monitor
@@ -86,41 +87,56 @@ def debug_logs(container_id, name):
             pass
 
 
-# def build_dynamic_train_jobs() -> List[JobSpec]:
-#     return [
-#         JobSpec(
-#             name="train-job1",
-#             job_type="train",
-#             command=f"python {TRAIN_CONTAINER_JOBS_DIR}/job1.py",
-#             gpu_idx=0,
-#             mps_percentage=50,
-#         ),
-#         JobSpec(
-#             name="train-recommend",
-#             job_type="train",
-#             command=(
-#                 f"python {TRAIN_CONTAINER_JOBS_DIR}/recommend-train.py"
-#                 " --batch_size 2"
-#                 " --model_name bert-large-cased"
-#                 " --profile_nstep 1000"
-#                 " --log_dir test"
-#             ),
-#             gpu_idx=0,
-#             mps_percentage=50,
-#             envs={
-#                 "PYTHONUNBUFFERED": "1",
-#                 "PEACE_CHECKPOINT_PATH": TRAIN_RECOMMEND_CHECKPOINT,
-#             },
-#             workdir=TRAIN_WORKDIR,
-#         ),
-#         JobSpec(
-#             name="train-job3",
-#             job_type="train",
-#             command=f"python {TRAIN_CONTAINER_JOBS_DIR}/job3.py",
-#             gpu_idx=0,
-#             mps_percentage=50,
-#         ),
-#     ]
+def build_dynamic_jobs() -> List[JobSpec]:
+    """
+    Queue entries are tagged by workload type and carry their own MPS partition.
+    Later, PEACE can replace these fixed percentages before enqueueing.
+    """
+    serve_job_cmd = (
+        f"bash -c 'cd {SERVE_WORKDIR} && python {SERVE_CONTAINER_JOBS_DIR}/recommend-inference.py"
+        " --batch_size 2"
+        " --model_name bert-base-cased"
+        " --profile_nstep 10000"
+        " --log_dir test'"
+    )
+
+    return [
+        JobSpec(
+            name="train-job1",
+            job_type="training",
+            command=f"python {TRAIN_CONTAINER_JOBS_DIR}/job1.py",
+            gpu_idx=0,
+            mps_percentage=50,
+        ),
+        JobSpec(
+            name="serve-recommend",
+            job_type="inference",
+            command=serve_job_cmd,
+            gpu_idx=0,
+            mps_percentage=50,
+            envs={"PYTHONUNBUFFERED": "1"},
+            readiness_log_marker=FIRST_BATCH_LOG_MARKER,
+        ),
+        JobSpec(
+            name="train-recommend",
+            job_type="training",
+            command=TRAIN_RECOMMEND_CMD,
+            gpu_idx=0,
+            mps_percentage=40,
+            envs={
+                "PYTHONUNBUFFERED": "1",
+                "PEACE_CHECKPOINT_PATH": TRAIN_RECOMMEND_CHECKPOINT,
+            },
+            workdir=TRAIN_WORKDIR,
+        ),
+        JobSpec(
+            name="train-job3",
+            job_type="training",
+            command=f"python {TRAIN_CONTAINER_JOBS_DIR}/job3.py",
+            gpu_idx=0,
+            mps_percentage=60,
+        ),
+    ]
 
 
 
@@ -262,40 +278,31 @@ def main():
         DockerLayer.stop_and_remove(job3_id)
         logger.info("Training Workflow Complete.")
 
-    # elif args.mode == 'dynamic-train':
-    #     logger.info(">>> Starting Dynamic Training Scheduler...")
-    #     scheduler = Scheduler(
-    #         image_name=IMAGE_NAME,
-    #         volumes=volumes,
-    #         peace_prefix=PEACE_CONTAINER_PREFIX,
-    #         max_running_jobs=2,
-    #     )
-    #     scheduler.extend(build_dynamic_train_jobs())
+    elif args.mode == 'dynamic-train':
+        logger.info(">>> Starting Dynamic Queue Scheduler...")
+        scheduler = Scheduler(
+            image_name=IMAGE_NAME,
+            volumes=volumes,
+            peace_prefix=PEACE_CONTAINER_PREFIX,
+            max_running_jobs=2,
+        )
+        scheduler.extend(build_dynamic_jobs())
 
-    #     launched = scheduler.reconcile()
-    #     logger.info("Scheduler launched initial jobs: %s", [job.container_name for job in launched])
+        while scheduler.has_work():
+            launches = scheduler.step()
+            if launches:
+                logger.info(
+                    "Scheduler advanced jobs: %s",
+                    [
+                        f"{launch.container_name}"
+                        f"({launch.job.job_type}, {launch.job.status}, {launch.job.mps_percentage}% MPS)"
+                        for launch in launches
+                    ],
+                )
 
-    #     while scheduler.has_pending_jobs() or scheduler.snapshot().running_count > 0:
-    #         snapshot = scheduler.snapshot()
+            time.sleep(1)
 
-    #         if snapshot.running_count < scheduler.max_running_jobs and scheduler.has_pending_jobs():
-    #             launched = scheduler.reconcile()
-    #             if launched:
-    #                 logger.info("Scheduler launched jobs: %s", [job.container_name for job in launched])
-    #                 snapshot = scheduler.snapshot()
-
-    #         if snapshot.running_count == 0:
-    #             if scheduler.has_pending_jobs():
-    #                 continue
-    #             break
-
-    #         running_map = {job.container_id: job.container_name for job in snapshot.running_jobs}
-    #         finished_id = Monitor.wait_for_any_exit(list(running_map.keys()))
-    #         finished_name = running_map.get(finished_id, finished_id)
-    #         logger.info("Scheduler observed exit for %s. Recomputing node state.", finished_name)
-    #         debug_logs(finished_id, finished_name)
-
-    #     logger.info("Dynamic Training Scheduler Complete.")
+        logger.info("Dynamic Queue Scheduler Complete.")
 
     elif args.mode == 'serve-gpu-check':
         # ----------------------------------------------------------------
@@ -481,11 +488,8 @@ def main():
         job1_id = DockerLayer.start_container(IMAGE_NAME, "peace-jobA", f"python {TRAIN_CONTAINER_JOBS_DIR}/job1.py", 0, 50, volumes)
         job2_id = DockerLayer.start_container(IMAGE_NAME, "peace-jobB", f"python {TRAIN_CONTAINER_JOBS_DIR}/job3.py", 0, 50, volumes)
 
-        # Give containers a moment to start
-        time.sleep(5)
-
-        # Call monitor methods
-        node_state = Monitor.get_peace_node_state()
+        # Wait until Docker reports a stable PEACE view before reading state.
+        node_state = Monitor.wait_for_stable_peace_node_state(expected_count=2)
         running_count = Monitor.get_peace_running_job_count()
         logger.info(f"[GENERAL MODE] PEACE node state: {node_state}")
         logger.info(f"[GENERAL MODE] PEACE running job count: {running_count}")
@@ -497,177 +501,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-# def main():
-#     state = get_state()
-    
-#     # Ensure Volumes (Including MPS!)
-#     volumes = {
-#         CHECKPOINT_HOST_DIR: {'bind': CHECKPOINT_MOUNT_DIR, 'mode': 'rw'},
-#         '/tmp/nvidia-mps': {'bind': '/tmp/nvidia-mps', 'mode': 'rw'},
-#         HOST_JOBS_DIR: {'bind': CONTAINER_JOBS_DIR, 'mode': 'ro'}
-#     }
-    
-#     # 1. DEFINE COMMANDS
-#     cmd_job1 = f"python {CONTAINER_JOBS_DIR}/job1.py"
-#     cmd_job2_old = f"python {CONTAINER_JOBS_DIR}/job2.py --save_path {CHECKPOINT_MOUNT_DIR}/job2_ckpt.pt"
-#     cmd_job2_new = f"python {CONTAINER_JOBS_DIR}/job2.py --resume_from {CHECKPOINT_MOUNT_DIR}/job2_ckpt.pt"
-#     cmd_job3 = f"python {CONTAINER_JOBS_DIR}/job3.py"
-
-#     # 2. START INITIAL STATE
-#     logger.info(">>> Launching Initial Jobs...")
-    
-#     job1_id = DockerLayer.start_container(IMAGE_NAME, "job1", cmd_job1, 0, 50, volumes)
-#     job2_old_id = DockerLayer.start_container(IMAGE_NAME, "job2_old", cmd_job2_old, 0, 50, volumes)
-    
-#     active_containers = [job1_id, job2_old_id]
-
-#     # finished_id = Monitor.wait_for_any_exit(active_containers)
-#     # Keep the workflow simple for now and just wait for Job 1 to finish (since Job 2 is infinite loop until checkpointed)
-#     job1_id = Monitor.wait_for_any_exit([job1_id])
-
-
-#     # Start job2_new and job3 immediately after job1 finishes.
-#     job2_new_id = DockerLayer.start_container(IMAGE_NAME, "job2_new", cmd_job2_new, 0, 40, volumes)
-#     job3_id = DockerLayer.start_container(IMAGE_NAME, "job3", cmd_job3, 0, 60, volumes)
-
-#     start_time = time.time()
-#     while True:
-#         job2_new_running = DockerLayer.is_container_running(job2_new_id)
-#         job3_running = DockerLayer.is_container_running(job3_id)
-
-#         if job2_new_running and job3_running:
-#             logger.info("Both Job 2 (New) and Job 3 are running smoothly...")
-#             break
-        
-#         time.sleep(0.1)
-
-#     total_time = time.time() - start_time
-#     logger.info(f"Job2 New took {total_time:.2f} seconds to start.")
-
-#     DockerLayer.stop_and_remove(job2_old_id)
-
-
-    # # 3. DEFINE RELATIONSHIPS (The Generic Logic)
-    # # "If Key finishes -> Checkpoint Value"
-    # swap_map = {
-    #     job1_id: job2_old_id
-    # }
-    
-    # active_containers = [job1_id, job2_old_id]
-
-    # # 4. MONITOR LOOP (Generic)
-    # logger.info(f"Monitoring active containers: {active_containers}")
-    
-    # # Wait for ANY container to exit
-    # finished_id = Monitor.wait_for_any_exit(active_containers)
-    
-    # # 5. HANDLE THE EVENT
-    # if finished_id in swap_map:
-    #     # A Trigger Job finished!
-    #     victim_id = swap_map[finished_id]
-    #     logger.info(f"Trigger Job ({finished_id}) finished. Initiating swap on Victim ({victim_id}).")
-        
-    #     # Debug: Show logs of the finished job
-    #     debug_logs(finished_id, "Trigger Job")
-    #     if not DEBUG_MODE: DockerLayer.stop_and_remove(finished_id)
-
-    #     # A. Checkpoint the Victim
-    #     logger.info("Sending Signal to Victim...")
-    #     DockerLayer.send_signal(victim_id, "SIGUSR1")
-        
-    #     # B. Wait for Victim to Save & Exit
-    #     Monitor.wait_for_any_exit([victim_id])
-    #     logger.info("Victim has exited.")
-        
-    #     debug_logs(victim_id, "Victim Job")
-    #     if not DEBUG_MODE: DockerLayer.stop_and_remove(victim_id)
-
-    #     # C. Respawn
-    #     logger.info(">>> Spawning New Workloads...")
-    #     job2_new_id = DockerLayer.start_container(IMAGE_NAME, "job2_new", cmd_job2_new, 0, 40, volumes)
-    #     job3_id = DockerLayer.start_container(IMAGE_NAME, "job3", cmd_job3, 0, 40, volumes)
-        
-    #     # Monitor the new ones
-    #     Monitor.wait_for_any_exit([job2_new_id])
-    #     Monitor.wait_for_any_exit([job3_id])
-        
-    # else:
-    #     # The Victim died early? Or unknown job?
-    #     logger.error(f"Unexpected container {finished_id} finished first! Aborting.")
-    #     debug_logs(finished_id, "Failed Job")
-
-    # logger.info("Experiment Complete.")
-
-# if __name__ == "__main__":
-#     if not os.path.exists(CHECKPOINT_HOST_DIR):
-#         os.makedirs(CHECKPOINT_HOST_DIR)
-#     main()
-
-
-    # elif args.mode == 'serve':
-    #     # ----------------------------------------------------------------
-    #     # Serve workflow with container-level router/load balancer.
-    #     #   Phase 1: job1 (toy, 50%) + job2_old (inference, 50%)
-    #     #   Phase 2: job2_new (inference, 40%) + job3 (toy, 60%)
-    #     # The router detects job2_new readiness via Docker container logs
-    #     # and measures the actual switch/downtime.
-    #     # ----------------------------------------------------------------
-
-    #     # Build the commands for serve mode (all scripts from jobs/ folder)
-    #     serve_container_cmd = f"python {SERVE_CONTAINER_JOBS_DIR}/{SERVE_INFERENCE_CMD}"
-    #     serve_job1_cmd = f"python {SERVE_CONTAINER_JOBS_DIR}/job1.py"
-    #     serve_job3_cmd = f"python {SERVE_CONTAINER_JOBS_DIR}/job3.py"
-    #     serve_envs = {"PYTHONUNBUFFERED": "1"}
-
-    #     # Create the router
-    #     router = Router()
-
-    #     # 1. START INITIAL STATE: Job1 (toy) + Job2_old (inference) at 50/50 MPS
-    #     logger.info(">>> Launching Initial Jobs (Job1 + Job2 Old)...")
-    #     job1_id = DockerLayer.start_container(IMAGE_NAME, "job1", serve_job1_cmd, 0, 50, SERVE_VOLUMES, envs=serve_envs)
-    #     job2_old_id = DockerLayer.start_container(
-    #         IMAGE_NAME, "job2_old", serve_container_cmd, 0, 50, SERVE_VOLUMES, envs=serve_envs
-    #     )
-
-    #     # 2. Point router to job2_old (it's the active backend)
-    #     router.set_backend(job2_old_id)
-    #     logger.info("Router -> Job2 Old")
-
-    #     # 3. Wait for Job1 to complete
-    #     logger.info("Waiting for Job 1 to finish...")
-    #     Monitor.wait_for_any_exit([job1_id])
-    #     logger.info("Job 1 finished.")
-
-    #     # 4. Spawn Job2_new and Job3 with revised MPS partitions
-    #     logger.info(">>> Launching Phase 2 (Job2 New + Job 3)...")
-    #     job2_new_id = DockerLayer.start_container(
-    #         IMAGE_NAME, "job2_new", serve_container_cmd, 0, 40, SERVE_VOLUMES, envs=serve_envs
-    #     )
-    #     job3_id = DockerLayer.start_container(IMAGE_NAME, "job3", serve_job3_cmd, 0, 60, SERVE_VOLUMES, envs=serve_envs)
-
-    #     # 5. Switch router from job2_old to job2_new (measures downtime)
-    #     #    The router polls job2_new's container logs for inference output.
-    #     switch_duration = router.switch_backend(job2_new_id)
-
-    #     if switch_duration is not None:
-    #         logger.info(f">>> ROUTER SWITCH DOWNTIME: {switch_duration:.4f} seconds")
-    #     else:
-    #         logger.error("Router switch failed (timeout)!")
-
-    #     # 6. Kill job2_old now that router points to job2_new
-    #     logger.info(f"Stopping Job2 Old ({job2_old_id})...")
-    #     debug_logs(job2_old_id, "job2_old")
-    #     DockerLayer.stop_and_remove(job2_old_id)
-    #     logger.info("Job2 Old stopped and removed.")
-
-    #     # 7. Dump logs from new containers
-    #     debug_logs(job2_new_id, "job2_new")
-    #     debug_logs(job3_id, "job3")
-
-    #     # 8. Verify job2_old is gone
-    #     if not DockerLayer.is_container_running(job2_old_id):
-    #         logger.info("Serve Workflow Complete. Job2_old successfully replaced.")
-    #     else:
-    #         logger.error("Job2_old is still running! Something went wrong.")
