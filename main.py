@@ -322,23 +322,18 @@ def main():
             image_name=IMAGE_NAME,
             volumes=volumes,
             peace_prefix=PEACE_CONTAINER_PREFIX,
-            max_running_jobs=2,
         )
-        scheduler.extend(build_dynamic_jobs(args.dynamic_workflow))
 
-        while scheduler.has_work():
-            launches = scheduler.step()
-            if launches:
-                logger.info(
-                    "Scheduler advanced jobs: %s",
-                    [
-                        f"{launch.container_name}"
-                        f"({launch.job.job_type}, {launch.job.status}, {launch.job.mps_percentage}% MPS)"
-                        for launch in launches
-                    ],
-                )
+        while True:
+            exited_container_id = scheduler.schedule_to_two_and_wait_for_exit()
+            if exited_container_id is None:
+                logger.info("Dynamic Queue Scheduler has no more work to schedule or monitor.")
+                break
 
-            time.sleep(1)
+            logger.info("Scheduler observed exit for container %s.", exited_container_id)
+            launched_ids = scheduler.handle_exit_and_trigger_workflow(exited_container_id)
+            if launched_ids:
+                logger.info("Scheduler launched workflow containers: %s", launched_ids)
 
         logger.info("Dynamic Queue Scheduler Complete.")
 
