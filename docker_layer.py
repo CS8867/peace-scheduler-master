@@ -182,7 +182,7 @@ class DockerLayer:
             container = client.containers.get(container_id)
             container.stop(timeout=5) # Give it 5 seconds to wrap up naturally
             # container.remove(force=True)
-            logging.info(f"Container {container_id} stopped and removed.")
+            logging.info(f"Container {container_id} stopped.")
         except docker.errors.NotFound:
             logging.warning(f"Container {container_id} not found (already gone?).")
         except Exception as e:

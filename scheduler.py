@@ -1,6 +1,7 @@
 from collections import deque
 from dataclasses import dataclass, field
 import logging
+import time
 from typing import Deque, Dict, List, Optional
 
 from docker_layer import DockerLayer
@@ -178,6 +179,40 @@ class Scheduler:
             readiness_log_marker=survivor_job.readiness_log_marker,
         )
 
+    def wait_until_container_absent_from_monitor(
+        self,
+        container_id: str,
+        poll_interval: float = 0.5,
+        stable_polls: int = 2,
+        timeout: int = 30,
+    ) -> PeaceNodeState:
+        start_time = time.time()
+        absent_polls = 0
+        latest_state = self.refresh_node_state()
+
+        while True:
+            latest_state = self.refresh_node_state()
+            running_ids = {job.container_id for job in latest_state.running_jobs}
+
+            if container_id not in running_ids:
+                absent_polls += 1
+            else:
+                absent_polls = 0
+
+            if absent_polls >= stable_polls:
+                logging.info(
+                    "Scheduler: container %s is absent from PEACE monitor state.",
+                    container_id,
+                )
+                return latest_state
+
+            if time.time() - start_time > timeout:
+                raise TimeoutError(
+                    f"Timed out waiting for {container_id} to leave PEACE monitor state."
+                )
+
+            time.sleep(poll_interval)
+
     def schedule_next_jobs(self, count: int) -> List[str]:
         scheduled_container_ids = []
         for _ in range(min(count, len(self.job_queue))):
@@ -295,6 +330,7 @@ class Scheduler:
             )
             DockerLayer.send_signal(survivor.container_id, "SIGUSR1")
             Monitor.wait_for_any_exit([survivor.container_id])
+            self.wait_until_container_absent_from_monitor(survivor.container_id)
             self.active_jobs_by_id.pop(survivor.container_id, None)
             self.active_jobs_by_name.pop(survivor.container_name, None)
 
@@ -312,6 +348,7 @@ class Scheduler:
             Monitor.wait_for_stable_peace_node_state(name_prefix=self.peace_prefix)
 
         DockerLayer.stop_and_remove(survivor.container_id)
+        self.wait_until_container_absent_from_monitor(survivor.container_id)
         self.active_jobs_by_id.pop(survivor.container_id, None)
         self.active_jobs_by_name.pop(survivor.container_name, None)
         return [next_container_id, redeploy_container_id]
