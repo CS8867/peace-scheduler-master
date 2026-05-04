@@ -213,6 +213,23 @@ class Scheduler:
 
             time.sleep(poll_interval)
 
+    def wait_until_container_running(
+        self,
+        container_id: str,
+        poll_interval: float = 0.2,
+        timeout: int = 30,
+    ) -> None:
+        start_time = time.time()
+        while True:
+            if DockerLayer.is_container_running(container_id):
+                logging.info("Scheduler: container %s is running.", container_id)
+                return
+
+            if time.time() - start_time > timeout:
+                raise TimeoutError(f"Timed out waiting for {container_id} to start running.")
+
+            time.sleep(poll_interval)
+
     def schedule_next_jobs(self, count: int) -> List[str]:
         scheduled_container_ids = []
         for _ in range(min(count, len(self.job_queue))):
@@ -345,9 +362,9 @@ class Scheduler:
         if redeploy_job.readiness_log_marker:
             Monitor.wait_for_log_message(redeploy_container_id, redeploy_job.readiness_log_marker)
         else:
-            Monitor.wait_for_stable_peace_node_state(name_prefix=self.peace_prefix)
+            self.wait_until_container_running(redeploy_container_id)
 
-        DockerLayer.stop_and_remove(survivor.container_id)
+        DockerLayer.kill_container(survivor.container_id)
         self.wait_until_container_absent_from_monitor(survivor.container_id)
         self.active_jobs_by_id.pop(survivor.container_id, None)
         self.active_jobs_by_name.pop(survivor.container_name, None)

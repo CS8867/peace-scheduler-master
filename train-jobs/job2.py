@@ -26,7 +26,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--save_path', type=str, default='./checkpoints/job2.pt')
     parser.add_argument('--resume_from', type=str, default=None)
-    parser.add_argument('--max_epochs', type=int, default=10000)
+    parser.add_argument('--max_epochs', type=int, default=100)
     parser.add_argument('--batch_size', type=int, default=64)
     args = parser.parse_args()
 

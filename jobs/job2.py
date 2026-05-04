@@ -71,7 +71,7 @@ def run_job2():
         logging.info("Starting fresh Job 2")
 
     # Training Loop
-    while True:
+    while current_epoch < args.max_epochs:
         current_epoch += 1
         
         # Heavy work with larger batches
@@ -88,10 +88,13 @@ def run_job2():
         
         time.sleep(0.2) # Shorter sleep to keep GPU busier
 
+    logging.info(f"Reached max_epochs={args.max_epochs}. Exiting.")
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--save_path', type=str, help='Where to save the checkpoint')
     parser.add_argument('--resume_from', type=str, help='Path to checkpoint to load')
+    parser.add_argument('--max_epochs', type=int, default=100, help='Maximum epochs before exiting')
     args = parser.parse_args()
     
     run_job2()

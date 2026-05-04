@@ -189,6 +189,20 @@ class DockerLayer:
             logging.error(f"Error stopping container {container_id}: {str(e)}")
 
     @staticmethod
+    def kill_container(container_id: str, signal_name: str = "SIGKILL"):
+        """
+        Immediately kills a running container.
+        """
+        try:
+            container = client.containers.get(container_id)
+            container.kill(signal=signal_name)
+            logging.info(f"Container {container_id} killed with {signal_name}.")
+        except docker.errors.NotFound:
+            logging.warning(f"Container {container_id} not found (already gone?).")
+        except Exception as e:
+            logging.error(f"Error killing container {container_id}: {str(e)}")
+
+    @staticmethod
     def is_container_running(container_id: str) -> bool:
         """
         Checks if a container is currently running.
