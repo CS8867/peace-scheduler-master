@@ -210,7 +210,7 @@ class Scheduler:
     def wait_until_container_absent_from_monitor(
         self,
         container_id: str,
-        poll_interval: float = 0.5,
+        poll_interval: float = 1,
         stable_polls: int = 2,
         timeout: int = 30,
     ) -> PeaceNodeState:
@@ -245,7 +245,7 @@ class Scheduler:
     def wait_until_container_running(
         self,
         container_id: str,
-        poll_interval: float = 0.2,
+        poll_interval: float = 1,
         timeout: int = 30,
     ) -> None:
         start_time = time.time()

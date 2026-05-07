@@ -145,7 +145,7 @@ class Monitor:
     @staticmethod
     def wait_for_any_exit(
         container_ids: List[str],
-        poll_interval: int = 2,
+        poll_interval: int = 1,
         container_names_by_id: Optional[Dict[str, str]] = None,
     ) -> str:
         """
@@ -178,7 +178,7 @@ class Monitor:
 
 
     @staticmethod
-    def wait_for_gpu_run(container_id: str, poll_interval: int = 2, timeout: int = 120) -> str:
+    def wait_for_gpu_run(container_id: str, poll_interval: int = 1, timeout: int = 120) -> str:
         """
         Waits until the container's workload is actively using the GPU.
         Returns the container_id on success, or None on timeout / early exit.
@@ -228,7 +228,7 @@ class Monitor:
     def wait_for_log_message(
         container_id: str,
         expected_text: str,
-        poll_interval: float = 0.2,
+        poll_interval: float = 1,
         timeout: int = 120,
         tail: int = 100,
     ) -> str:
