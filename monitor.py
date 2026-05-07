@@ -84,7 +84,7 @@ class Monitor:
         name_prefix: str = "peace-",
         expected_count: Optional[int] = None,
         stable_polls: int = 3,
-        poll_interval: float = 1.0,
+        poll_interval: float = 0.5,
         timeout: int = 60,
     ) -> PeaceNodeState:
         """
