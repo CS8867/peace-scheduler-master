@@ -1,7 +1,7 @@
 import time
 import logging
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Dict, List, Optional
 from docker_layer import DockerLayer
 import subprocess
 
@@ -25,6 +25,17 @@ class PeaceNodeState:
         return len(self.running_jobs)
 
 class Monitor:
+    @staticmethod
+    def _container_ref(container_id: Optional[str] = None, container_name: Optional[str] = None) -> str:
+        return DockerLayer.format_container_ref(container_id=container_id, container_name=container_name)
+
+    @staticmethod
+    def _job_refs(running_jobs: List[PeaceRunningJob]) -> List[str]:
+        return [
+            Monitor._container_ref(job.container_id, job.container_name)
+            for job in running_jobs
+        ]
+
     @staticmethod
     def _node_state_signature(node_state: PeaceNodeState) -> tuple:
         """
@@ -68,7 +79,7 @@ class Monitor:
         logging.info(
             "Monitor: PEACE node state -> %s running job(s): %s",
             len(running_jobs),
-            [job.container_name for job in running_jobs],
+            Monitor._job_refs(running_jobs),
         )
         return PeaceNodeState(running_jobs=running_jobs)
 
@@ -118,7 +129,7 @@ class Monitor:
                 logging.info(
                     "Monitor: Stable PEACE node state reached with %s running job(s): %s",
                     latest_state.running_count,
-                    [job.container_name for job in latest_state.running_jobs],
+                    Monitor._job_refs(latest_state.running_jobs),
                 )
                 return latest_state
 
@@ -132,17 +143,35 @@ class Monitor:
             time.sleep(poll_interval)
 
     @staticmethod
-    def wait_for_any_exit(container_ids: List[str], poll_interval: int = 2) -> str:
+    def wait_for_any_exit(
+        container_ids: List[str],
+        poll_interval: int = 2,
+        container_names_by_id: Optional[Dict[str, str]] = None,
+    ) -> str:
         """
         Watches a LIST of containers. 
         Returns the ID of the FIRST one that finishes.
         """
-        logging.info(f"Monitor: Watching {len(container_ids)} containers: {container_ids}")
+        container_names_by_id = container_names_by_id or {}
+        container_refs = [
+            Monitor._container_ref(
+                container_id=c_id,
+                container_name=container_names_by_id.get(c_id),
+            )
+            for c_id in container_ids
+        ]
+        logging.info(f"Monitor: Watching {len(container_ids)} containers: {container_refs}")
         
         while True:
             for c_id in container_ids:
                 if not DockerLayer.is_container_running(c_id):
-                    logging.info(f"Monitor: Alert! Container {c_id} has finished.")
+                    logging.info(
+                        "Monitor: Alert! Container %s has finished.",
+                        Monitor._container_ref(
+                            container_id=c_id,
+                            container_name=container_names_by_id.get(c_id),
+                        ),
+                    )
                     return c_id
             
             time.sleep(poll_interval)
@@ -155,9 +184,11 @@ class Monitor:
         Returns the container_id on success, or None on timeout / early exit.
         """
         # First, wait for the container to be in "Running" state
+        container_ref = Monitor._container_ref(container_id=container_id)
         while True:
             if DockerLayer.is_container_running(container_id):
-                logging.info(f"Monitor: Container {container_id} is running. Now checking for GPU usage...")
+                container_ref = Monitor._container_ref(container_id=container_id)
+                logging.info(f"Monitor: Container {container_ref} is running. Now checking for GPU usage...")
                 break
             time.sleep(poll_interval)
 
@@ -167,12 +198,12 @@ class Monitor:
         while True:
             # Escape hatch: container died while we were waiting
             if not DockerLayer.is_container_running(container_id):
-                logging.error(f"Monitor: Container {container_id} exited before using the GPU.")
+                logging.error(f"Monitor: Container {container_ref} exited before using the GPU.")
                 return None
 
             # Escape hatch: timeout
             if time.time() - start_time > timeout:
-                logging.error(f"Monitor: Timed out waiting for {container_id} to use the GPU.")
+                logging.error(f"Monitor: Timed out waiting for {container_ref} to use the GPU.")
                 return None
 
             # Fetch ALL host PIDs belonging to this container (handles bash -> python case)
@@ -188,7 +219,7 @@ class Monitor:
             # Check if ANY container PID is in the GPU process list
             for pid in host_pids:
                 if str(pid) in gpu_pids:
-                    logging.info(f"Monitor: Container {container_id} (PID {pid}) is using the GPU.")
+                    logging.info(f"Monitor: Container {container_ref} (PID {pid}) is using the GPU.")
                     return container_id
 
             time.sleep(poll_interval)
@@ -205,20 +236,21 @@ class Monitor:
         Waits until the container emits a specific log marker.
         Returns the container_id on success, or None on timeout / early exit.
         """
-        logging.info(f"Monitor: Waiting for log marker '{expected_text}' from container {container_id}.")
+        container_ref = Monitor._container_ref(container_id=container_id)
+        logging.info(f"Monitor: Waiting for log marker '{expected_text}' from container {container_ref}.")
         start_time = time.time()
 
         while True:
             if DockerLayer.container_logs_contain(container_id, expected_text, tail=tail):
-                logging.info(f"Monitor: Container {container_id} emitted marker '{expected_text}'.")
+                logging.info(f"Monitor: Container {container_ref} emitted marker '{expected_text}'.")
                 return container_id
 
             if not DockerLayer.is_container_running(container_id):
-                logging.error(f"Monitor: Container {container_id} exited before emitting '{expected_text}'.")
+                logging.error(f"Monitor: Container {container_ref} exited before emitting '{expected_text}'.")
                 return None
 
             if time.time() - start_time > timeout:
-                logging.error(f"Monitor: Timed out waiting for {container_id} to emit '{expected_text}'.")
+                logging.error(f"Monitor: Timed out waiting for {container_ref} to emit '{expected_text}'.")
                 return None
 
             time.sleep(poll_interval)

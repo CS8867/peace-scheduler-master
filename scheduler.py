@@ -142,6 +142,34 @@ class Scheduler:
             return job.name
         return f"{self.peace_prefix}{job.name}"
 
+    def container_ref(
+        self,
+        container_id: Optional[str] = None,
+        job: Optional[Job] = None,
+        container_name: Optional[str] = None,
+    ) -> str:
+        if container_name is None and job is not None:
+            container_name = self.make_container_name(job)
+        return DockerLayer.format_container_ref(
+            container_id=container_id,
+            container_name=container_name,
+        )
+
+    def node_state_container_refs(self, node_state: PeaceNodeState) -> List[str]:
+        return [
+            self.container_ref(
+                container_id=job.container_id,
+                container_name=job.container_name,
+            )
+            for job in node_state.running_jobs
+        ]
+
+    def node_state_container_names_by_id(self, node_state: PeaceNodeState) -> Dict[str, str]:
+        return {
+            job.container_id: job.container_name
+            for job in node_state.running_jobs
+        }
+
     def start_job(self, job: Job) -> str:
         container_name = self.make_container_name(job)
         container_id = DockerLayer.start_container(
@@ -202,13 +230,14 @@ class Scheduler:
             if absent_polls >= stable_polls:
                 logging.info(
                     "Scheduler: container %s is absent from PEACE monitor state.",
-                    container_id,
+                    self.container_ref(container_id=container_id),
                 )
                 return latest_state
 
             if time.time() - start_time > timeout:
                 raise TimeoutError(
-                    f"Timed out waiting for {container_id} to leave PEACE monitor state."
+                    f"Timed out waiting for {self.container_ref(container_id=container_id)} "
+                    "to leave PEACE monitor state."
                 )
 
             time.sleep(poll_interval)
@@ -222,11 +251,17 @@ class Scheduler:
         start_time = time.time()
         while True:
             if DockerLayer.is_container_running(container_id):
-                logging.info("Scheduler: container %s is running.", container_id)
+                logging.info(
+                    "Scheduler: container %s is running.",
+                    self.container_ref(container_id=container_id),
+                )
                 return
 
             if time.time() - start_time > timeout:
-                raise TimeoutError(f"Timed out waiting for {container_id} to start running.")
+                raise TimeoutError(
+                    f"Timed out waiting for {self.container_ref(container_id=container_id)} "
+                    "to start running."
+                )
 
             time.sleep(poll_interval)
 
@@ -240,7 +275,7 @@ class Scheduler:
                 "Scheduler: scheduled %s (%s) as %s.",
                 job.name,
                 job.job_type,
-                self.make_container_name(job),
+                self.container_ref(container_id=container_id, job=job),
             )
 
         return scheduled_container_ids
@@ -265,8 +300,15 @@ class Scheduler:
 
         if node_state.running_count >= 2:
             container_ids = [job.container_id for job in node_state.running_jobs]
-            logging.info("Scheduler: %s PEACE jobs running. Waiting for one to exit.", node_state.running_count)
-            return Monitor.wait_for_any_exit(container_ids)
+            logging.info(
+                "Scheduler: %s PEACE jobs running: %s. Waiting for one to exit.",
+                node_state.running_count,
+                self.node_state_container_refs(node_state),
+            )
+            return Monitor.wait_for_any_exit(
+                container_ids,
+                container_names_by_id=self.node_state_container_names_by_id(node_state),
+            )
 
         if node_state.running_count == 1:
             logging.info("Scheduler: one PEACE job running. Scheduling one more job.")
@@ -281,8 +323,14 @@ class Scheduler:
             if not container_ids:
                 return None
 
-            logging.info("Scheduler: waiting for one of %s to exit.", container_ids)
-            return Monitor.wait_for_any_exit(container_ids)
+            logging.info(
+                "Scheduler: waiting for one of %s to exit.",
+                self.node_state_container_refs(node_state),
+            )
+            return Monitor.wait_for_any_exit(
+                container_ids,
+                container_names_by_id=self.node_state_container_names_by_id(node_state),
+            )
 
         logging.info("Scheduler: no PEACE jobs running. Scheduling two jobs.")
         scheduled_ids = self.schedule_next_jobs(2)
@@ -299,8 +347,14 @@ class Scheduler:
         if not container_ids:
             return None
 
-        logging.info("Scheduler: waiting for one of %s to exit.", container_ids)
-        return Monitor.wait_for_any_exit(container_ids)
+        logging.info(
+            "Scheduler: waiting for one of %s to exit.",
+            self.node_state_container_refs(node_state),
+        )
+        return Monitor.wait_for_any_exit(
+            container_ids,
+            container_names_by_id=self.node_state_container_names_by_id(node_state),
+        )
 
     def handle_exit_and_trigger_workflow(self, exited_container_id: str) -> List[str]:
         """
@@ -327,7 +381,10 @@ class Scheduler:
         if survivor_job is None:
             logging.error(
                 "Scheduler: cannot identify survivor spec for %s. Workflow not triggered.",
-                survivor.container_name,
+                self.container_ref(
+                    container_id=survivor.container_id,
+                    container_name=survivor.container_name,
+                ),
             )
             return []
 
@@ -343,10 +400,16 @@ class Scheduler:
         if survivor_job.job_type == "training":
             logging.info(
                 "Scheduler: survivor %s is training. Sending checkpoint signal before redeploy.",
-                survivor.container_name,
+                self.container_ref(
+                    container_id=survivor.container_id,
+                    container_name=survivor.container_name,
+                ),
             )
             DockerLayer.send_signal(survivor.container_id, "SIGUSR1")
-            Monitor.wait_for_any_exit([survivor.container_id])
+            Monitor.wait_for_any_exit(
+                [survivor.container_id],
+                container_names_by_id={survivor.container_id: survivor.container_name},
+            )
             self.wait_until_container_absent_from_monitor(survivor.container_id)
             self.active_jobs_by_id.pop(survivor.container_id, None)
             self.active_jobs_by_name.pop(survivor.container_name, None)
@@ -356,7 +419,10 @@ class Scheduler:
 
         logging.info(
             "Scheduler: survivor %s is inference. Starting redeploy before stopping old container.",
-            survivor.container_name,
+            self.container_ref(
+                container_id=survivor.container_id,
+                container_name=survivor.container_name,
+            ),
         )
         redeploy_container_id = self.start_job(redeploy_job)
         if redeploy_job.readiness_log_marker:

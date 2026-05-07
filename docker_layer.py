@@ -7,6 +7,22 @@ from typing import Dict, List, Optional
 client = docker.from_env()
 
 class DockerLayer:
+    @staticmethod
+    def format_container_ref(container_id: Optional[str] = None, container_name: Optional[str] = None) -> str:
+        """
+        Formats a container reference as "name (id)" whenever both are known.
+        """
+        if container_id and container_name:
+            return f"{container_name} ({container_id})"
+        if container_id:
+            try:
+                container = client.containers.get(container_id)
+                return f"{container.name} ({container.short_id})"
+            except Exception:
+                return f"unknown ({container_id})"
+        if container_name:
+            return f"{container_name} (id unknown)"
+        return "unknown (id unknown)"
 
     @staticmethod
     def list_containers(all_containers: bool = False, name_prefix: Optional[str] = None) -> List[Dict[str, object]]:
@@ -73,7 +89,7 @@ class DockerLayer:
                 docker.types.DeviceRequest(count=-1, capabilities=[['gpu']])
             ]
 
-            logging.info(f"Spawning {name} on GPU {gpu_idx} with {mps_percentage}% MPS...")
+            logging.info(f"Spawning {DockerLayer.format_container_ref(container_name=name)} on GPU {gpu_idx} with {mps_percentage}% MPS...")
 
             # 3. Run the Container
             container = client.containers.run(
@@ -92,10 +108,14 @@ class DockerLayer:
                 tty=interactive              # -t flag: allocate a pseudo-TTY
             )
             
+            logging.info(
+                f"Spawned {DockerLayer.format_container_ref(container_id=container.short_id, container_name=container.name)} "
+                f"on GPU {gpu_idx} with {mps_percentage}% MPS."
+            )
             return container.short_id
 
         except Exception as e:
-            logging.error(f"Failed to start container {name}: {str(e)}")
+            logging.error(f"Failed to start container {DockerLayer.format_container_ref(container_name=name)}: {str(e)}")
             raise e
 
     @staticmethod
@@ -123,8 +143,9 @@ class DockerLayer:
         """
         try:
             container = client.containers.get(container_id)
+            container_ref = DockerLayer.format_container_ref(container_id=container.short_id, container_name=container.name)
             logging.info(
-                f"Exec inside {container_id}: {command}"
+                f"Exec inside {container_ref}: {command}"
                 + (f"  (workdir={workdir})" if workdir else "")
             )
 
@@ -135,19 +156,19 @@ class DockerLayer:
             )
 
             if detach:
-                logging.info(f"Command launched (detached) in {container_id}.")
+                logging.info(f"Command launched (detached) in {container_ref}.")
                 return None
 
             decoded = output.decode("utf-8") if output else ""
             if exit_code == 0:
-                logging.info(f"Command succeeded in {container_id}. Output:\n{decoded}")
+                logging.info(f"Command succeeded in {container_ref}. Output:\n{decoded}")
             else:
-                logging.error(f"Command failed (exit {exit_code}) in {container_id}. Output:\n{decoded}")
+                logging.error(f"Command failed (exit {exit_code}) in {container_ref}. Output:\n{decoded}")
 
             return exit_code, decoded
 
         except Exception as e:
-            logging.error(f"Error executing command in {container_id}: {str(e)}")
+            logging.error(f"Error executing command in {DockerLayer.format_container_ref(container_id=container_id)}: {str(e)}")
             raise e
 
     @staticmethod
@@ -158,19 +179,20 @@ class DockerLayer:
         """
         try:
             container = client.containers.get(container_id)
-            logging.info(f"Executing checkpoint command inside {container_id}...")
+            container_ref = DockerLayer.format_container_ref(container_id=container.short_id, container_name=container.name)
+            logging.info(f"Executing checkpoint command inside {container_ref}...")
             
             # exec_run executes the command inside the container
             exit_code, output = container.exec_run(checkpoint_cmd, detach=False)
             
             if exit_code == 0:
-                logging.info(f"Checkpoint successful for {container_id}")
+                logging.info(f"Checkpoint successful for {container_ref}")
                 return True
             else:
-                logging.error(f"Checkpoint failed for {container_id}. Output: {output.decode('utf-8')}")
+                logging.error(f"Checkpoint failed for {container_ref}. Output: {output.decode('utf-8')}")
                 return False
         except Exception as e:
-            logging.error(f"Error triggering checkpoint on {container_id}: {str(e)}")
+            logging.error(f"Error triggering checkpoint on {DockerLayer.format_container_ref(container_id=container_id)}: {str(e)}")
             return False
 
     @staticmethod
@@ -182,11 +204,11 @@ class DockerLayer:
             container = client.containers.get(container_id)
             container.stop(timeout=5) # Give it 5 seconds to wrap up naturally
             # container.remove(force=True)
-            logging.info(f"Container {container_id} stopped.")
+            logging.info(f"Container {DockerLayer.format_container_ref(container_id=container.short_id, container_name=container.name)} stopped.")
         except docker.errors.NotFound:
-            logging.warning(f"Container {container_id} not found (already gone?).")
+            logging.warning(f"Container {DockerLayer.format_container_ref(container_id=container_id)} not found (already gone?).")
         except Exception as e:
-            logging.error(f"Error stopping container {container_id}: {str(e)}")
+            logging.error(f"Error stopping container {DockerLayer.format_container_ref(container_id=container_id)}: {str(e)}")
 
     @staticmethod
     def kill_container(container_id: str, signal_name: str = "SIGKILL"):
@@ -196,11 +218,11 @@ class DockerLayer:
         try:
             container = client.containers.get(container_id)
             container.kill(signal=signal_name)
-            logging.info(f"Container {container_id} killed with {signal_name}.")
+            logging.info(f"Container {DockerLayer.format_container_ref(container_id=container.short_id, container_name=container.name)} killed with {signal_name}.")
         except docker.errors.NotFound:
-            logging.warning(f"Container {container_id} not found (already gone?).")
+            logging.warning(f"Container {DockerLayer.format_container_ref(container_id=container_id)} not found (already gone?).")
         except Exception as e:
-            logging.error(f"Error killing container {container_id}: {str(e)}")
+            logging.error(f"Error killing container {DockerLayer.format_container_ref(container_id=container_id)}: {str(e)}")
 
     @staticmethod
     def is_container_running(container_id: str) -> bool:
@@ -220,11 +242,14 @@ class DockerLayer:
         """
         try:
             container = client.containers.get(container_id)
-            logging.info(f"Sending signal {signal_name} to {container_id}...")
+            logging.info(
+                f"Sending signal {signal_name} to "
+                f"{DockerLayer.format_container_ref(container_id=container.short_id, container_name=container.name)}..."
+            )
             container.kill(signal=signal_name) # 'kill' is the Docker SDK name for sending signals
             return True
         except Exception as e:
-            logging.error(f"Failed to send signal to {container_id}: {str(e)}")
+            logging.error(f"Failed to send signal to {DockerLayer.format_container_ref(container_id=container_id)}: {str(e)}")
             return False
 
     @staticmethod
@@ -236,9 +261,9 @@ class DockerLayer:
         try:
             container = client.containers.get(container_id)
             container.wait() # This blocks the thread
-            logging.info(f"Container {container_id} has exited.")
+            logging.info(f"Container {DockerLayer.format_container_ref(container_id=container.short_id, container_name=container.name)} has exited.")
         except Exception as e:
-            logging.error(f"Error waiting for container {container_id}: {str(e)}")
+            logging.error(f"Error waiting for container {DockerLayer.format_container_ref(container_id=container_id)}: {str(e)}")
 
     @staticmethod
     def wait_for_log_message(container_id: str):
@@ -254,7 +279,11 @@ class DockerLayer:
             container = client.containers.get(container_id)
             logs = container.logs()
             if "Ready" in logs.decode("utf-8"):  # Do we have to do utf-8?
-                logging.info(f"Container {container_id} is actually in ready state")
+                logging.info(
+                    f"Container "
+                    f"{DockerLayer.format_container_ref(container_id=container.short_id, container_name=container.name)} "
+                    f"is actually in ready state"
+                )
                 break
             time.sleep(1)
 
@@ -275,7 +304,7 @@ class DockerLayer:
             pids = [int(proc[pid_index]) for proc in top_output['Processes']]
             return pids
         except Exception as e:
-            logging.error(f"Error getting host PIDs for {container_id}: {str(e)}")
+            logging.error(f"Error getting host PIDs for {DockerLayer.format_container_ref(container_id=container_id)}: {str(e)}")
             return []
 
     @staticmethod
@@ -288,7 +317,7 @@ class DockerLayer:
             logs = container.logs(tail=tail).decode("utf-8", errors="replace")
             return expected_text in logs
         except Exception as e:
-            logging.error(f"Error checking logs for {container_id}: {str(e)}")
+            logging.error(f"Error checking logs for {DockerLayer.format_container_ref(container_id=container_id)}: {str(e)}")
             return False
 
     @staticmethod

@@ -330,10 +330,19 @@ def main():
                 logger.info("Dynamic Queue Scheduler has no more work to schedule or monitor.")
                 break
 
-            logger.info("Scheduler observed exit for container %s.", exited_container_id)
+            logger.info(
+                "Scheduler observed exit for container %s.",
+                DockerLayer.format_container_ref(container_id=exited_container_id),
+            )
             launched_ids = scheduler.handle_exit_and_trigger_workflow(exited_container_id)
             if launched_ids:
-                logger.info("Scheduler launched workflow containers: %s", launched_ids)
+                logger.info(
+                    "Scheduler launched workflow containers: %s",
+                    [
+                        DockerLayer.format_container_ref(container_id=container_id)
+                        for container_id in launched_ids
+                    ],
+                )
 
         logger.info("Dynamic Queue Scheduler Complete.")
 
