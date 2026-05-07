@@ -76,7 +76,10 @@ def train(args: argparse.Namespace, profiler: MLProfiler = None) -> None:
     """
     end TODO of Counting data download & process time
     """
+    time_to_load_model_start = time.time()
     model = AutoModelForSequenceClassification.from_pretrained(args.model_name, num_labels=5)
+    time_to_load_model_end = time.time()
+    logger.log(f"[TIMER] Time to load model: {time_to_load_model_end - time_to_load_model_start:.4f} seconds")
 
     if args.ckpt:
         args.ckpt_dir.mkdir(parents=True, exist_ok=True)
@@ -154,6 +157,7 @@ def train(args: argparse.Namespace, profiler: MLProfiler = None) -> None:
     steps = checkpoint_runtime["steps"]
     model.train()
     start_epoch = manager.start_epoch
+    logger.log(f"[TIMER] Time until training loop start: {time.time() - train_start_time:.4f} seconds")
     logger.log(f"Starting Loop from Epoch {start_epoch}...")
     for epoch in range(start_epoch, run_epochs + 1):
 
