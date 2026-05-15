@@ -313,19 +313,16 @@ class Scheduler:
         if node_state.running_count == 1:
             logging.info("Scheduler: one PEACE job running. Scheduling one more job.")
             scheduled_ids = self.schedule_next_jobs(1)
-            if scheduled_ids:
-                node_state = Monitor.wait_for_stable_peace_node_state(
-                    name_prefix=self.peace_prefix,
-                    expected_count=2,
-                )
-
-            container_ids = [job.container_id for job in node_state.running_jobs]
+            container_ids = [job.container_id for job in node_state.running_jobs] + scheduled_ids
             if not container_ids:
                 return None
 
             logging.info(
                 "Scheduler: waiting for one of %s to exit.",
-                self.node_state_container_refs(node_state),
+                [
+                    self.container_ref(container_id=job.container_id, container_name=job.container_name)
+                    for job in node_state.running_jobs
+                ] + [self.container_ref(container_id=container_id) for container_id in scheduled_ids],
             )
             return Monitor.wait_for_any_exit(
                 container_ids,
@@ -338,22 +335,14 @@ class Scheduler:
             logging.info("Scheduler: no queued jobs available.")
             return None
 
-        expected_count = len(scheduled_ids)
-        node_state = Monitor.wait_for_stable_peace_node_state(
-            name_prefix=self.peace_prefix,
-            expected_count=expected_count,
-        )
-        container_ids = [job.container_id for job in node_state.running_jobs]
-        if not container_ids:
-            return None
+        container_ids = scheduled_ids
 
         logging.info(
             "Scheduler: waiting for one of %s to exit.",
-            self.node_state_container_refs(node_state),
+            [self.container_ref(container_id=container_id) for container_id in container_ids],
         )
         return Monitor.wait_for_any_exit(
             container_ids,
-            container_names_by_id=self.node_state_container_names_by_id(node_state),
         )
 
     def handle_exit_and_trigger_workflow(self, exited_container_id: str) -> List[str]:
@@ -368,12 +357,16 @@ class Scheduler:
         if exited_job:
             self.active_jobs_by_name.pop(self.make_container_name(exited_job), None)
 
-        node_state = Monitor.wait_for_stable_peace_node_state(name_prefix=self.peace_prefix)
-        if node_state.running_count == 0:
+        node_state = self.refresh_node_state()
+        surviving_jobs = [
+            job for job in node_state.running_jobs
+            if job.container_id != exited_container_id
+        ]
+        if not surviving_jobs:
             logging.info("Scheduler: no survivor after exit. Scheduling two fresh jobs next.")
             return self.schedule_next_jobs(2)
 
-        survivor = node_state.running_jobs[0]
+        survivor = surviving_jobs[0]
         survivor_job = self.active_jobs_by_id.get(survivor.container_id)
         if survivor_job is None:
             survivor_job = self.active_jobs_by_name.get(survivor.container_name)
