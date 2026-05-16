@@ -441,24 +441,16 @@ class Scheduler:
                 container_names_by_id={survivor.container_id: survivor.container_name},
             )
             self.wait_until_container_absent_from_monitor(survivor.container_id)
-            if not self.training_checkpoint_was_saved(survivor.container_id):
-                logging.info(
-                    "Scheduler: survivor %s exited without a checkpoint-success marker. "
-                    "Assuming natural completion and skipping redeploy.",
-                    self.container_ref(
-                        container_id=survivor.container_id,
-                        container_name=survivor.container_name,
-                    ),
-                )
-                self.active_jobs_by_id.pop(survivor.container_id, None)
-                self.active_jobs_by_name.pop(survivor.container_name, None)
-                return [next_container_id]
-
+            logging.info(
+                "Scheduler: survivor %s is absent from the node. Cancelling redeploy.",
+                self.container_ref(
+                    container_id=survivor.container_id,
+                    container_name=survivor.container_name,
+                ),
+            )
             self.active_jobs_by_id.pop(survivor.container_id, None)
             self.active_jobs_by_name.pop(survivor.container_name, None)
-
-            redeploy_container_id = self.start_job(redeploy_job)
-            return [next_container_id, redeploy_container_id]
+            return [next_container_id]
 
         logging.info(
             "Scheduler: survivor %s is inference. Starting redeploy before stopping old container.",
