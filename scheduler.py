@@ -398,7 +398,33 @@ class Scheduler:
                     container_name=survivor.container_name,
                 ),
             )
-            DockerLayer.send_signal(survivor.container_id, "SIGUSR1")
+            signal_sent = DockerLayer.send_signal(survivor.container_id, "SIGUSR1")
+            if not signal_sent:
+                node_state = self.refresh_node_state()
+                running_ids = {job.container_id for job in node_state.running_jobs}
+                if survivor.container_id not in running_ids:
+                    logging.info(
+                        "Scheduler: checkpoint signal failed because survivor %s is already gone. "
+                        "Skipping redeploy.",
+                        self.container_ref(
+                            container_id=survivor.container_id,
+                            container_name=survivor.container_name,
+                        ),
+                    )
+                    self.active_jobs_by_id.pop(survivor.container_id, None)
+                    self.active_jobs_by_name.pop(survivor.container_name, None)
+                    return [next_container_id]
+
+                logging.error(
+                    "Scheduler: checkpoint signal failed but survivor %s is still running. "
+                    "Skipping redeploy to avoid unsafe duplicate launch.",
+                    self.container_ref(
+                        container_id=survivor.container_id,
+                        container_name=survivor.container_name,
+                    ),
+                )
+                return [next_container_id]
+
             Monitor.wait_for_any_exit(
                 [survivor.container_id],
                 container_names_by_id={survivor.container_id: survivor.container_name},
