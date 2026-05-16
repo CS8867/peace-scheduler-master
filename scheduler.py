@@ -265,6 +265,17 @@ class Scheduler:
 
             time.sleep(poll_interval)
 
+    def training_checkpoint_was_saved(self, container_id: str) -> bool:
+        checkpoint_markers = [
+            "State saved. Exiting process now.",
+            "Checkpoint saved",
+            "Time taken to save checkpoint",
+        ]
+        return any(
+            DockerLayer.container_logs_contain(container_id, marker, tail=200)
+            for marker in checkpoint_markers
+        )
+
     def schedule_next_jobs(self, count: int) -> List[str]:
         scheduled_container_ids = []
         for _ in range(min(count, len(self.job_queue))):
@@ -430,6 +441,19 @@ class Scheduler:
                 container_names_by_id={survivor.container_id: survivor.container_name},
             )
             self.wait_until_container_absent_from_monitor(survivor.container_id)
+            if not self.training_checkpoint_was_saved(survivor.container_id):
+                logging.info(
+                    "Scheduler: survivor %s exited without a checkpoint-success marker. "
+                    "Assuming natural completion and skipping redeploy.",
+                    self.container_ref(
+                        container_id=survivor.container_id,
+                        container_name=survivor.container_name,
+                    ),
+                )
+                self.active_jobs_by_id.pop(survivor.container_id, None)
+                self.active_jobs_by_name.pop(survivor.container_name, None)
+                return [next_container_id]
+
             self.active_jobs_by_id.pop(survivor.container_id, None)
             self.active_jobs_by_name.pop(survivor.container_name, None)
 
