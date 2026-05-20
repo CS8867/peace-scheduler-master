@@ -3,7 +3,8 @@ import json
 import logging
 import os
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Dict, Tuple
 
 
@@ -54,7 +55,29 @@ class LiveInferenceService:
             cache_dir=self.cache_dir,
         )
         logging.info("Model loaded. Moving model to %s...", self.device)
-        self.model.to(self.device)
+        
+        # Move to device with timeout protection (hangs on GPU memory issues)
+        move_timeout_sec = 120
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(self.model.to, self.device)
+                future.result(timeout=move_timeout_sec)
+            logging.info("Model moved to device successfully.")
+        except FuturesTimeoutError:
+            logging.error(
+                "TIMEOUT: model.to(%s) took > %d seconds. GPU may be out of memory or hung. "
+                "Try --device cpu or reduce model size.",
+                self.device,
+                move_timeout_sec,
+            )
+            raise RuntimeError(
+                f"Device transfer timeout after {move_timeout_sec}s. "
+                f"GPU out of memory or CUDA driver issue. Try --device cpu."
+            )
+        except Exception as e:
+            logging.error("FAILED to move model to device: %s", e)
+            raise
+        
         logging.info("Model moved to device. Setting to eval mode...")
         self.model.eval()
         logging.info("Model set to eval mode.")
@@ -97,13 +120,18 @@ class LiveInferenceService:
 
 def make_handler(service: LiveInferenceService):
     class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
         def _send_json(self, status_code: int, payload: Dict[str, object]) -> None:
             body = json.dumps(payload).encode("utf-8")
             self.send_response(status_code)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
+            self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.write(body)
+            self.wfile.flush()
+            self.close_connection = True
 
         def _read_json(self) -> Tuple[Dict[str, object], bool]:
             content_length = int(self.headers.get("Content-Length", "0"))
@@ -116,13 +144,31 @@ def make_handler(service: LiveInferenceService):
                 return {}, False
 
         def do_GET(self) -> None:
-            if self.path == "/health":
+            path = self.path.split("?", 1)[0]
+            logging.info("HTTP request received method=GET path=%s", path)
+            if path == "/health":
                 self._send_json(200, {"status": "ok", "model": service.model_name})
                 return
             self._send_json(404, {"error": "not found"})
 
+        def do_HEAD(self) -> None:
+            path = self.path.split("?", 1)[0]
+            logging.info("HTTP request received method=HEAD path=%s", path)
+            if path == "/health":
+                self.send_response(200)
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.close_connection = True
+                return
+            self.send_response(404)
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+
         def do_POST(self) -> None:
-            if self.path != "/infer":
+            path = self.path.split("?", 1)[0]
+            logging.info("HTTP request received method=POST path=%s", path)
+            if path != "/infer":
                 self._send_json(404, {"error": "not found"})
                 return
 
@@ -164,7 +210,7 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - LIVE-INFER - %(message)s", force=True)
     service = LiveInferenceService(args.model_name, args.device, args.max_length, args.cache_dir)
-    server = ThreadingHTTPServer((args.host, args.port), make_handler(service))
+    server = HTTPServer((args.host, args.port), make_handler(service))
     logging.info("Serving live inference on %s:%s", args.host, args.port)
     server.serve_forever()
 
