@@ -5,9 +5,6 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Dict, Tuple
 
-import torch
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
-
 
 READY_MARKER = "PEACE_EVENT: LIVE_INFERENCE_READY"
 REQUEST_MARKER = "PEACE_EVENT: LIVE_INFERENCE_REQUEST"
@@ -15,6 +12,11 @@ REQUEST_MARKER = "PEACE_EVENT: LIVE_INFERENCE_REQUEST"
 
 class LiveInferenceService:
     def __init__(self, model_name: str, device: str, max_length: int) -> None:
+        logging.info("Importing torch and transformers...")
+        import torch
+        from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+        self.torch = torch
         self.model_name = model_name
         self.device = torch.device(device if device else ("cuda" if torch.cuda.is_available() else "cpu"))
         self.max_length = max_length
@@ -45,11 +47,11 @@ class LiveInferenceService:
         )
         inputs = {key: value.to(self.device) for key, value in inputs.items()}
 
-        with torch.no_grad():
+        with self.torch.no_grad():
             outputs = self.model(**inputs)
             logits = outputs.logits
-            prediction = int(torch.argmax(logits, dim=-1).item())
-            scores = torch.softmax(logits, dim=-1).detach().cpu().tolist()[0]
+            prediction = int(self.torch.argmax(logits, dim=-1).item())
+            scores = self.torch.softmax(logits, dim=-1).detach().cpu().tolist()[0]
 
         if self.device.type == "cuda":
             torch.cuda.synchronize()
