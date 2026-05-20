@@ -18,7 +18,13 @@ class LiveInferenceService:
         logging.info("Post imports...")
         self.torch = torch
         self.model_name = model_name
-        self.device = torch.device(device if device else ("cuda" if torch.cuda.is_available() else "cpu"))
+        if device == "auto":
+            logging.info("Auto-detecting device with torch.cuda.is_available()...")
+            selected_device = "cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            selected_device = device
+        logging.info("Selected device=%s", selected_device)
+        self.device = torch.device(selected_device)
         self.max_length = max_length
 
         load_start = time.time()
@@ -124,7 +130,7 @@ def main() -> None:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--model_name", default="bert-large-cased")
-    parser.add_argument("--device", default=None)
+    parser.add_argument("--device", default="cuda", choices=["cuda", "cpu", "auto"])
     parser.add_argument("--max_length", type=int, default=512)
     args = parser.parse_args()
 
