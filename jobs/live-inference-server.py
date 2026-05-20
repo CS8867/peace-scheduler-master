@@ -1,6 +1,7 @@
 import argparse
 import json
 import logging
+import os
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Dict, Tuple
@@ -11,13 +12,22 @@ REQUEST_MARKER = "PEACE_EVENT: LIVE_INFERENCE_REQUEST"
 
 
 class LiveInferenceService:
-    def __init__(self, model_name: str, device: str, max_length: int) -> None:
+    def __init__(self, model_name: str, device: str, max_length: int, cache_dir: str) -> None:
+        cache_dir = os.path.abspath(cache_dir)
+        os.makedirs(cache_dir, exist_ok=True)
+        os.makedirs(os.path.join(cache_dir, "hub"), exist_ok=True)
+        os.makedirs(os.path.join(cache_dir, "transformers"), exist_ok=True)
+        os.environ.setdefault("HF_HOME", cache_dir)
+        os.environ.setdefault("HF_HUB_CACHE", os.path.join(cache_dir, "hub"))
+        os.environ.setdefault("TRANSFORMERS_CACHE", os.path.join(cache_dir, "transformers"))
+
         logging.info("Importing torch and transformers...")
         import torch
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
         logging.info("Post imports...")
         self.torch = torch
         self.model_name = model_name
+        self.cache_dir = cache_dir
         if device == "auto":
             logging.info("Auto-detecting device with torch.cuda.is_available()...")
             selected_device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -28,17 +38,26 @@ class LiveInferenceService:
         self.max_length = max_length
 
         load_start = time.time()
-        logging.info("Starting live inference service with model=%s device=%s", model_name, self.device)
+        logging.info(
+            "Starting live inference service with model=%s device=%s cache_dir=%s",
+            model_name,
+            self.device,
+            self.cache_dir,
+        )
         logging.info("Loading tokenizer for %s...", model_name)
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir=self.cache_dir)
         logging.info("Tokenizer loaded.")
         logging.info("Loading model %s...", model_name)
-        self.model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=5)
+        self.model = AutoModelForSequenceClassification.from_pretrained(
+            model_name,
+            num_labels=5,
+            cache_dir=self.cache_dir,
+        )
         logging.info("Model loaded. Moving model to %s...", self.device)
         self.model.to(self.device)
         self.model.eval()
         if self.device.type == "cuda":
-            torch.cuda.synchronize()
+            self.torch.cuda.synchronize()
         logging.info("[TIMER] live_inference_model_load_time: %.4f seconds", time.time() - load_start)
         logging.info("%s model=%s device=%s", READY_MARKER, model_name, self.device)
 
@@ -60,7 +79,7 @@ class LiveInferenceService:
             scores = self.torch.softmax(logits, dim=-1).detach().cpu().tolist()[0]
 
         if self.device.type == "cuda":
-            torch.cuda.synchronize()
+            self.torch.cuda.synchronize()
 
         latency_ms = (time.time() - start) * 1000
         logging.info("%s latency_ms=%.2f prediction=%s", REQUEST_MARKER, latency_ms, prediction)
@@ -132,10 +151,15 @@ def main() -> None:
     parser.add_argument("--model_name", default="bert-large-cased")
     parser.add_argument("--device", default="cuda", choices=["cuda", "cpu", "auto"])
     parser.add_argument("--max_length", type=int, default=512)
+    parser.add_argument(
+        "--cache_dir",
+        default=os.path.join(os.path.expanduser("~"), ".cache", "peace-hf"),
+        help="Writable local cache directory used for Hugging Face model/tokenizer downloads.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - LIVE-INFER - %(message)s", force=True)
-    service = LiveInferenceService(args.model_name, args.device, args.max_length)
+    service = LiveInferenceService(args.model_name, args.device, args.max_length, args.cache_dir)
     server = ThreadingHTTPServer((args.host, args.port), make_handler(service))
     logging.info("Serving live inference on %s:%s", args.host, args.port)
     server.serve_forever()
