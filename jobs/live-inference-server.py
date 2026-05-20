@@ -20,8 +20,13 @@ class LiveInferenceService:
         self.max_length = max_length
 
         load_start = time.time()
+        logging.info("Starting live inference service with model=%s device=%s", model_name, self.device)
+        logging.info("Loading tokenizer for %s...", model_name)
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        logging.info("Tokenizer loaded.")
+        logging.info("Loading model %s...", model_name)
         self.model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=5)
+        logging.info("Model loaded. Moving model to %s...", self.device)
         self.model.to(self.device)
         self.model.eval()
         if self.device.type == "cuda":
