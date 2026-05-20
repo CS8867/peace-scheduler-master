@@ -1,0 +1,132 @@
+import argparse
+import json
+import logging
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Dict, Tuple
+
+import torch
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+
+READY_MARKER = "PEACE_EVENT: LIVE_INFERENCE_READY"
+REQUEST_MARKER = "PEACE_EVENT: LIVE_INFERENCE_REQUEST"
+
+
+class LiveInferenceService:
+    def __init__(self, model_name: str, device: str, max_length: int) -> None:
+        self.model_name = model_name
+        self.device = torch.device(device if device else ("cuda" if torch.cuda.is_available() else "cpu"))
+        self.max_length = max_length
+
+        load_start = time.time()
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        self.model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=5)
+        self.model.to(self.device)
+        self.model.eval()
+        if self.device.type == "cuda":
+            torch.cuda.synchronize()
+        logging.info("[TIMER] live_inference_model_load_time: %.4f seconds", time.time() - load_start)
+        logging.info("%s model=%s device=%s", READY_MARKER, model_name, self.device)
+
+    def infer(self, text: str) -> Dict[str, object]:
+        start = time.time()
+        inputs = self.tokenizer(
+            text,
+            return_tensors="pt",
+            truncation=True,
+            padding=True,
+            max_length=self.max_length,
+        )
+        inputs = {key: value.to(self.device) for key, value in inputs.items()}
+
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+            logits = outputs.logits
+            prediction = int(torch.argmax(logits, dim=-1).item())
+            scores = torch.softmax(logits, dim=-1).detach().cpu().tolist()[0]
+
+        if self.device.type == "cuda":
+            torch.cuda.synchronize()
+
+        latency_ms = (time.time() - start) * 1000
+        logging.info("%s latency_ms=%.2f prediction=%s", REQUEST_MARKER, latency_ms, prediction)
+        return {
+            "model": self.model_name,
+            "prediction": prediction,
+            "scores": scores,
+            "latency_ms": latency_ms,
+        }
+
+
+def make_handler(service: LiveInferenceService):
+    class Handler(BaseHTTPRequestHandler):
+        def _send_json(self, status_code: int, payload: Dict[str, object]) -> None:
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(status_code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _read_json(self) -> Tuple[Dict[str, object], bool]:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            if content_length <= 0:
+                return {}, False
+            raw_body = self.rfile.read(content_length)
+            try:
+                return json.loads(raw_body.decode("utf-8")), True
+            except json.JSONDecodeError:
+                return {}, False
+
+        def do_GET(self) -> None:
+            if self.path == "/health":
+                self._send_json(200, {"status": "ok", "model": service.model_name})
+                return
+            self._send_json(404, {"error": "not found"})
+
+        def do_POST(self) -> None:
+            if self.path != "/infer":
+                self._send_json(404, {"error": "not found"})
+                return
+
+            payload, ok = self._read_json()
+            if not ok:
+                self._send_json(400, {"error": "invalid json body"})
+                return
+
+            text = str(payload.get("text", "")).strip()
+            if not text:
+                self._send_json(400, {"error": "missing non-empty 'text'"})
+                return
+
+            try:
+                self._send_json(200, service.infer(text))
+            except Exception as exc:
+                logging.exception("Inference request failed.")
+                self._send_json(500, {"error": str(exc)})
+
+        def log_message(self, format: str, *args) -> None:
+            logging.info("HTTP: " + format, *args)
+
+    return Handler
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Live PEACE inference HTTP server")
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--model_name", default="bert-large-cased")
+    parser.add_argument("--device", default=None)
+    parser.add_argument("--max_length", type=int, default=512)
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s - LIVE-INFER - %(message)s", force=True)
+    service = LiveInferenceService(args.model_name, args.device, args.max_length)
+    server = ThreadingHTTPServer((args.host, args.port), make_handler(service))
+    logging.info("Serving live inference on %s:%s", args.host, args.port)
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()
