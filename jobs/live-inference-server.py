@@ -55,9 +55,13 @@ class LiveInferenceService:
         )
         logging.info("Model loaded. Moving model to %s...", self.device)
         self.model.to(self.device)
+        logging.info("Model moved to device. Setting to eval mode...")
         self.model.eval()
+        logging.info("Model set to eval mode.")
         if self.device.type == "cuda":
+            logging.info("Synchronizing CUDA...")
             self.torch.cuda.synchronize()
+            logging.info("CUDA synchronized.")
         logging.info("[TIMER] live_inference_model_load_time: %.4f seconds", time.time() - load_start)
         logging.info("%s model=%s device=%s", READY_MARKER, model_name, self.device)
 
