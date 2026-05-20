@@ -15,7 +15,7 @@ class LiveInferenceService:
         logging.info("Importing torch and transformers...")
         import torch
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
-
+        logging.info("Post imports...")
         self.torch = torch
         self.model_name = model_name
         self.device = torch.device(device if device else ("cuda" if torch.cuda.is_available() else "cpu"))
